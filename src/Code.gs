@@ -53,18 +53,71 @@ var REQUEST_HEADERS = {
   Accept: 'application/json',
 };
 
-/* ------------------------------------------------------------------ 웹앱 */
+/* -------------------------------------------------------------- JSON API */
 
-function doGet() {
-  return (
-    HtmlService.createHtmlOutputFromFile('Index')
-      .setTitle('NPay증권 포트폴리오')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      // 웹앱은 /macros/s/... 경로가 고정이라 robots.txt 를 둘 수 없다.
-      // 색인 차단은 메타 태그로 한다. (X-Robots-Tag 헤더도 설정 불가)
-      .addMetaTag('robots', 'noindex, nofollow, noarchive, nosnippet')
-      .addMetaTag('googlebot', 'noindex, nofollow')
-  );
+/**
+ * GitHub Pages 화면이 호출하는 JSON API.
+ *
+ *   ?action=list
+ *   ?action=search&query=삼성전자
+ *   ?action=add&items=<JSON 배열>
+ *   ?action=delete&codes=<JSON 배열>
+ *   ?action=refresh
+ *
+ * Apps Script 는 응답 헤더를 설정할 수 없어 CORS 를 열 수 없다.
+ * 그래서 callback 파라미터가 오면 JSONP(script 태그 로드)로 응답한다.
+ */
+function doGet(e) {
+  var params = (e && e.parameter) || {};
+  var payload;
+
+  try {
+    payload = { ok: true, data: dispatch(params) };
+  } catch (err) {
+    payload = { ok: false, error: String((err && err.message) || err) };
+  }
+
+  return respond(payload, params.callback);
+}
+
+// 브라우저가 프리플라이트 없이 보낼 수 있는 요청만 쓰므로 doPost 도 같은 처리를 한다.
+function doPost(e) {
+  return doGet(e);
+}
+
+function dispatch(params) {
+  switch (params.action) {
+    case 'search':
+      return searchStocks(params.query);
+    case 'add':
+      return addStocks(JSON.parse(params.items || '[]'));
+    case 'delete':
+      return deleteStocks(JSON.parse(params.codes || '[]'));
+    case 'refresh':
+      return refreshPrices();
+    case 'list':
+    case undefined:
+    case '':
+      return listStocks();
+    default:
+      throw new Error('알 수 없는 action: ' + params.action);
+  }
+}
+
+function respond(payload, callback) {
+  var json = JSON.stringify(payload);
+
+  if (callback) {
+    // 콜백 이름은 그대로 코드가 되므로 식별자 형태만 허용한다.
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(callback)) {
+      throw new Error('잘못된 callback 이름');
+    }
+    return ContentService.createTextOutput(callback + '(' + json + ')').setMimeType(
+      ContentService.MimeType.JAVASCRIPT
+    );
+  }
+
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
 /** 타겟 스프레드시트를 바꾸고 싶을 때 편집기에서 직접 실행한다. */
@@ -96,6 +149,12 @@ function setupSheet() {
 
   // 내부 조회용 열이라 평소에는 감춰둔다.
   sheet.hideColumns(COL['reutersCode'], 2);
+
+  // '005930' 이 숫자 5930 으로 해석되면 앞자리 0 이 날아가 조회가 깨진다.
+  // 코드 계열 열은 텍스트 서식으로 고정한다.
+  var rows = sheet.getMaxRows() - 1;
+  sheet.getRange(2, COL['코드'], rows, 1).setNumberFormat('@');
+  sheet.getRange(2, COL['reutersCode'], rows, 2).setNumberFormat('@');
 
   sheet.getRange(2, COL['현재가'], sheet.getMaxRows() - 1, 2).setNumberFormat('#,##0.####');
   sheet.getRange(2, COL['등락률(%)'], sheet.getMaxRows() - 1, 1).setNumberFormat('0.00');
@@ -171,7 +230,13 @@ function addStocks(stocks) {
   });
 
   if (rows.length) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
+    var start = sheet.getLastRow() + 1;
+
+    // setValues 전에 텍스트 서식을 걸어야 '005930' 이 숫자로 해석되지 않는다.
+    sheet.getRange(start, COL['코드'], rows.length, 1).setNumberFormat('@');
+    sheet.getRange(start, COL['reutersCode'], rows.length, 2).setNumberFormat('@');
+
+    sheet.getRange(start, 1, rows.length, HEADERS.length).setValues(rows);
     refreshPrices();
   }
 
@@ -184,10 +249,11 @@ function getExistingReutersCodes(sheet) {
   if (last < 2) return map;
 
   sheet
-    .getRange(2, COL['reutersCode'], last - 1, 1)
+    .getRange(2, COL['reutersCode'], last - 1, 2)
     .getValues()
     .forEach(function (r) {
-      if (r[0]) map[String(r[0])] = true;
+      var code = normalizeCode(r[0], r[1]);
+      if (code) map[code] = true;
     });
   return map;
 }
@@ -201,7 +267,7 @@ function refreshPrices() {
 
   var rows = sheet.getRange(2, COL['reutersCode'], last - 1, 2).getValues();
   var codes = rows.map(function (r) {
-    return String(r[0] || '').trim();
+    return normalizeCode(r[0], r[1]);
   });
 
   // 종목별 URL 을 한 번에 묶어 병렬 호출한다. 행 수가 많아도 실행 시간이 크게 늘지 않는다.
@@ -260,14 +326,41 @@ function refreshPrices() {
 }
 
 /**
+ * 시트에서 읽은 종목코드를 원래 문자열로 되돌린다.
+ * 셀 서식이 텍스트가 아니면 '005930' 이 숫자 5930 으로 읽히므로,
+ * 국내 종목(6자리)은 앞을 0 으로 채워 복원한다.
+ */
+function normalizeCode(value, nationCode) {
+  var code = String(value === null || value === undefined ? '' : value).trim();
+  if (!code) return '';
+
+  // 6자리 미만 순수 숫자는 앞자리 0 이 날아간 국내 코드로 본다.
+  // ('TM' 같은 해외 티커는 숫자가 아니라 여기 걸리지 않는다.)
+  if (/^\d{1,5}$/.test(code) && (!nationCode || String(nationCode) === 'KOR')) {
+    while (code.length < 6) code = '0' + code;
+  }
+  return code;
+}
+
+/**
  * 국가에 맞는 시세 API URL 을 만든다.
  * nationCode 가 비어 있는 행(수동 입력 등)은 reutersCode 모양으로 판별한다.
  * 국내 코드는 '005930' 처럼 점이 없는 6자리, 해외는 'AAPL.O' 처럼 접미사가 붙는다.
  */
 function priceUrl(reutersCode, nationCode) {
-  var domestic = nationCode ? nationCode === 'KOR' : reutersCode.indexOf('.') === -1;
-  var base = domestic ? DOMESTIC_BASE : WORLD_BASE;
+  var base = isDomestic(reutersCode, nationCode) ? DOMESTIC_BASE : WORLD_BASE;
   return base + '/stock/' + encodeURIComponent(reutersCode) + '/basic';
+}
+
+/**
+ * nationCode 가 있으면 그것이 정답이다.
+ * 없을 때만 코드 모양으로 추정하는데, 국내 종목코드는 6자리 숫자
+ * (또는 '0193W0' 처럼 숫자로 시작하는 6자리)라는 점을 이용한다.
+ * 'TM' 같은 해외 티커를 국내로 오인하지 않도록 자릿수까지 본다.
+ */
+function isDomestic(reutersCode, nationCode) {
+  if (nationCode) return String(nationCode) === 'KOR';
+  return /^\d[0-9A-Z]{5}$/.test(String(reutersCode));
 }
 
 /**
@@ -338,12 +431,12 @@ function deleteStocks(reutersCodes) {
     target[String(c)] = true;
   });
 
-  var codes = sheet.getRange(2, COL['reutersCode'], last - 1, 1).getValues();
+  var codes = sheet.getRange(2, COL['reutersCode'], last - 1, 2).getValues();
 
   // 아래쪽부터 지워야 위 행을 지운 뒤 행 번호가 밀리지 않는다.
   var deleted = 0;
   for (var i = codes.length - 1; i >= 0; i--) {
-    if (target[String(codes[i][0])]) {
+    if (target[normalizeCode(codes[i][0], codes[i][1])]) {
       sheet.deleteRow(i + 2);
       deleted++;
     }
@@ -387,6 +480,10 @@ function listStocks() {
       HEADERS.forEach(function (h, i) {
         o[h] = r[i] instanceof Date ? formatDateTime(r[i]) : r[i];
       });
+
+      // 앞자리 0 이 날아간 코드를 화면에 그대로 보여주지 않는다.
+      o['reutersCode'] = normalizeCode(o['reutersCode'], o['nationCode']);
+      o['코드'] = normalizeCode(o['코드'], o['nationCode']);
       return o;
     });
 }

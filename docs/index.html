@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <title>NPay증권 포트폴리오</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <header>
+      <h1><span>NPay증권</span> 포트폴리오</h1>
+    </header>
+
+    <div class="bar">
+      <input id="query" type="text" placeholder="종목명 또는 티커 (예: 삼성전자, AAPL)" />
+      <button id="searchBtn">검색</button>
+    </div>
+
+    <div id="results"></div>
+
+    <div class="head">
+      <h2>보유 종목 <span id="count" class="sub"></span></h2>
+      <button class="ghost" id="refreshBtn">시세 새로고침</button>
+    </div>
+
+    <div id="msg"></div>
+    <div id="list"><div class="empty">불러오는 중…</div></div>
+
+    <footer>
+      데이터 출처
+      <a href="https://stock.naver.com/" target="_blank" rel="noopener">NPay증권</a>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

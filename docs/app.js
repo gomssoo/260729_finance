@@ -184,10 +184,10 @@ function renderList(rows) {
 
   var table = document.createElement('table');
   table.appendChild(
-    headerRow(['종목명', '현재가', '전일대비', '등락률', '통화', '장상태', '기준시각', ''])
+    headerRow(['', '종목명', '현재가', '전일대비', '등락률', '통화', '장상태', '기준시각', ''])
   );
-  rows.forEach(function (r) {
-    table.appendChild(stockRow(r));
+  rows.forEach(function (r, i) {
+    table.appendChild(stockRow(r, i, rows.length));
   });
 
   var wrap = document.createElement('div');
@@ -206,13 +206,20 @@ function headerRow(labels) {
   return tr;
 }
 
-function stockRow(r) {
+function stockRow(r, index, total) {
   var chg = r['전일대비'];
   var isNum = typeof chg === 'number';
   var cls = isNum && chg !== 0 ? (chg > 0 ? 'up' : 'down') : '';
   var sign = isNum && chg > 0 ? '+' : '';
 
   var tr = document.createElement('tr');
+
+  // 순서 이동 — 양 끝에서는 해당 방향 버튼을 비활성화한다.
+  var moveTd = document.createElement('td');
+  moveTd.className = 'move';
+  moveTd.appendChild(moveButton('▲', r, -1, index === 0));
+  moveTd.appendChild(moveButton('▼', r, 1, index === total - 1));
+  tr.appendChild(moveTd);
 
   var nameTd = document.createElement('td');
   var name = document.createElement('div');
@@ -245,6 +252,30 @@ function stockRow(r) {
   tr.appendChild(btnTd);
 
   return tr;
+}
+
+function moveButton(label, row, offset, disabled) {
+  var btn = document.createElement('button');
+  btn.className = 'move-btn';
+  btn.textContent = label;
+  btn.disabled = disabled;
+  btn.title = offset < 0 ? '위로' : '아래로';
+  btn.onclick = function () {
+    move(row['reutersCode'], offset);
+  };
+  return btn;
+}
+
+function move(code, offset) {
+  setBusy(true);
+  msg('순서 변경 중…');
+
+  callApi({ action: 'move', code: code, offset: offset })
+    .then(function (res) {
+      msg(res.moved ? '순서를 바꿨습니다' : '');
+      return load();
+    })
+    .catch(fail);
 }
 
 function cell(text, cls) {

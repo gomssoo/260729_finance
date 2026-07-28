@@ -200,6 +200,34 @@ td.down {
   color: var(--down);
 }
 
+td.move {
+  padding: 4px 2px 4px 0;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.move-btn {
+  display: block;
+  padding: 1px 5px;
+  margin: 1px 0;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 400;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.move-btn:hover:not(:disabled) {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.move-btn:disabled {
+  opacity: 0.25;
+}
+
 .empty {
   padding: 32px 12px;
   text-align: center;

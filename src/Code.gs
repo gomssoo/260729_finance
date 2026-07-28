@@ -95,6 +95,10 @@ function dispatch(params) {
       return deleteStocks(JSON.parse(params.codes || '[]'));
     case 'refresh':
       return refreshPrices();
+    case 'move':
+      return moveStock(params.code, Number(params.offset));
+    case 'reorder':
+      return reorderStocks(JSON.parse(params.codes || '[]'));
     case 'list':
     case undefined:
     case '':
@@ -315,6 +319,11 @@ function refreshPrices() {
     ];
   });
 
+  // setupSheet 는 최초 1회만 돌아서, 나중에 늘어난 행에는 서식이 없다.
+  // 서식이 없으면 14.94 가 15 로 반올림돼 보이므로 쓰기 직전에 매번 지정한다.
+  sheet.getRange(2, COL['현재가'], values.length, 2).setNumberFormat('#,##0.####');
+  sheet.getRange(2, COL['등락률(%)'], values.length, 1).setNumberFormat('0.00');
+
   sheet.getRange(2, COL['현재가'], values.length, width).setValues(values);
   sheet
     .getRange(2, COL['갱신시각'], values.length, 1)
@@ -443,6 +452,85 @@ function deleteStocks(reutersCodes) {
   }
 
   return { deleted: deleted };
+}
+
+/* ------------------------------------------------------------------ 정렬 */
+
+/**
+ * 한 종목을 offset 만큼 위(-1)/아래(+1)로 옮긴다.
+ * 목록 밖으로 나가는 이동은 무시한다.
+ */
+function moveStock(reutersCode, offset) {
+  if (!reutersCode || !offset) return { moved: false };
+
+  var sheet = getSheet();
+  var last = sheet.getLastRow();
+  if (last < 3) return { moved: false }; // 종목이 1개뿐이면 옮길 자리가 없다
+
+  var codes = sheet.getRange(2, COL['reutersCode'], last - 1, 2).getValues();
+  var from = -1;
+  for (var i = 0; i < codes.length; i++) {
+    if (normalizeCode(codes[i][0], codes[i][1]) === String(reutersCode)) {
+      from = i;
+      break;
+    }
+  }
+  if (from === -1) return { moved: false };
+
+  var to = from + offset;
+  if (to < 0 || to >= codes.length) return { moved: false };
+
+  swapRows(sheet, from + 2, to + 2);
+  return { moved: true };
+}
+
+function swapRows(sheet, rowA, rowB) {
+  var width = HEADERS.length;
+  var a = sheet.getRange(rowA, 1, 1, width);
+  var b = sheet.getRange(rowB, 1, 1, width);
+
+  var aValues = a.getValues();
+  var bValues = b.getValues();
+  // 서식(코드 열의 텍스트 지정 등)은 행에 그대로 두고 값만 맞바꾼다.
+  a.setValues(bValues);
+  b.setValues(aValues);
+}
+
+/** 화면에서 드래그로 만든 순서를 그대로 시트에 반영한다. */
+function reorderStocks(orderedCodes) {
+  if (!orderedCodes || !orderedCodes.length) return { reordered: 0 };
+
+  var sheet = getSheet();
+  var last = sheet.getLastRow();
+  if (last < 2) return { reordered: 0 };
+
+  var rows = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+
+  var byCode = {};
+  rows.forEach(function (r) {
+    var code = normalizeCode(r[COL['reutersCode'] - 1], r[COL['nationCode'] - 1]);
+    if (code) byCode[code] = r;
+  });
+
+  // 요청에 담긴 순서를 먼저 깔고, 빠진 종목은 원래 순서대로 뒤에 붙인다.
+  var used = {};
+  var ordered = [];
+  orderedCodes.forEach(function (c) {
+    var row = byCode[String(c)];
+    if (row && !used[String(c)]) {
+      used[String(c)] = true;
+      ordered.push(row);
+    }
+  });
+  rows.forEach(function (r) {
+    var code = normalizeCode(r[COL['reutersCode'] - 1], r[COL['nationCode'] - 1]);
+    if (code && !used[code]) ordered.push(r);
+  });
+
+  if (ordered.length !== rows.length) return { reordered: 0 };
+
+  sheet.getRange(2, 1, ordered.length, HEADERS.length).setValues(ordered);
+  return { reordered: ordered.length };
 }
 
 /* ------------------------------------------------------------------ 공통 */

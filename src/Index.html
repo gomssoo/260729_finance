@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <!-- 웹앱은 iframe 안에서 렌더링된다. 바깥 문서(doGet)와 별개로 여기에도 걸어둔다. -->
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <style>
+      :root {
+        --green: #03c75a;
+        --up: #d60000;
+        --down: #0051c7;
+        --line: #e8eaed;
+        --muted: #5f6368;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif;
+        margin: 0;
+        padding: 20px;
+        color: #202124;
+        font-size: 14px;
+        background: #fff;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 16px;
+      }
+      h1 span {
+        color: var(--green);
+      }
+      .bar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      input[type='text'] {
+        flex: 1;
+        padding: 9px 12px;
+        border: 1px solid #dadce0;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      input[type='text']:focus {
+        outline: none;
+        border-color: var(--green);
+      }
+      button {
+        padding: 9px 16px;
+        border: none;
+        border-radius: 6px;
+        background: var(--green);
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      button.ghost {
+        background: #fff;
+        color: #3c4043;
+        border: 1px solid #dadce0;
+      }
+      button.danger {
+        background: #fff;
+        color: #d93025;
+        border: 1px solid #f2b8b5;
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #results {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin-bottom: 20px;
+        max-height: 260px;
+        overflow-y: auto;
+      }
+      #results:empty {
+        display: none;
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f3f4;
+      }
+      .item:last-child {
+        border-bottom: none;
+      }
+      .name {
+        font-weight: 600;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 9px 8px;
+        text-align: right;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 600;
+        border-bottom: 2px solid #dadce0;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      td.up {
+        color: var(--up);
+      }
+      td.down {
+        color: var(--down);
+      }
+      .empty {
+        padding: 28px 12px;
+        text-align: center;
+        color: #80868b;
+      }
+      .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .head h2 {
+        font-size: 14px;
+        margin: 0;
+      }
+      #msg {
+        color: var(--muted);
+        font-size: 12px;
+        min-height: 16px;
+        margin-bottom: 8px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 400;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1><span>NPay증권</span> 포트폴리오</h1>
+
+    <div class="bar">
+      <input id="query" type="text" placeholder="종목명 또는 티커 (예: 삼성전자, AAPL)" />
+      <button id="searchBtn" onclick="search()">검색</button>
+    </div>
+
+    <div id="results"></div>
+
+    <div class="head">
+      <h2>보유 종목 <span id="count" class="sub"></span></h2>
+      <button class="ghost" id="refreshBtn" onclick="refresh()">시세 새로고침</button>
+    </div>
+    <div id="msg"></div>
+    <div id="list"><div class="empty">불러오는 중…</div></div>
+
+    <script>
+      var found = [];
+      var rowsCache = [];
+
+      document.getElementById('query').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') search();
+      });
+
+      function msg(text) {
+        document.getElementById('msg').textContent = text || '';
+      }
+
+      function fail(err) {
+        msg('오류: ' + (err && err.message ? err.message : err));
+        setButtons(false);
+      }
+
+      function setButtons(busy) {
+        document.getElementById('searchBtn').disabled = busy;
+        document.getElementById('refreshBtn').disabled = busy;
+      }
+
+      /* ---------------------------------------------------------- 검색 */
+
+      function search() {
+        var q = document.getElementById('query').value.trim();
+        if (!q) return;
+
+        setButtons(true);
+        document.getElementById('results').innerHTML = '<div class="empty">검색 중…</div>';
+
+        google.script.run
+          .withSuccessHandler(renderResults)
+          .withFailureHandler(function (e) {
+            document.getElementById('results').innerHTML = '';
+            fail(e);
+          })
+          .searchStocks(q);
+      }
+
+      function renderResults(items) {
+        found = items || [];
+        setButtons(false);
+
+        var box = document.getElementById('results');
+        if (!found.length) {
+          box.innerHTML = '<div class="empty">검색 결과가 없습니다.</div>';
+          return;
+        }
+
+        box.innerHTML = '';
+        found.forEach(function (s, i) {
+          var row = document.createElement('div');
+          row.className = 'item';
+
+          var info = document.createElement('div');
+          var name = document.createElement('div');
+          name.className = 'name';
+          name.textContent = s.name;
+          var meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = s.code + ' · ' + s.market + ' · ' + s.nation;
+          info.appendChild(name);
+          info.appendChild(meta);
+
+          var btn = document.createElement('button');
+          btn.textContent = '추가';
+          btn.onclick = function () {
+            add(i);
+          };
+
+          row.appendChild(info);
+          row.appendChild(btn);
+          box.appendChild(row);
+        });
+      }
+
+      function add(i) {
+        var s = found[i];
+        if (!s) return;
+
+        setButtons(true);
+        msg(s.name + ' 추가 중…');
+
+        google.script.run
+          .withSuccessHandler(function (res) {
+            msg(res.added ? s.name + ' 추가됨' : s.name + ' 은(는) 이미 있습니다');
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('query').value = '';
+            load();
+          })
+          .withFailureHandler(fail)
+          .addStocks([s]);
+      }
+
+      /* ---------------------------------------------------------- 목록 */
+
+      function load() {
+        google.script.run
+          .withSuccessHandler(renderList)
+          .withFailureHandler(function (e) {
+            document.getElementById('list').innerHTML = '';
+            fail(e);
+          })
+          .listStocks();
+      }
+
+      function renderList(rows) {
+        rowsCache = rows || [];
+        setButtons(false);
+        document.getElementById('count').textContent = rowsCache.length
+          ? '(' + rowsCache.length + ')'
+          : '';
+
+        var box = document.getElementById('list');
+        if (!rowsCache.length) {
+          box.innerHTML =
+            '<div class="empty">아직 추가한 종목이 없습니다.<br />위에서 검색해 추가해보세요.</div>';
+          return;
+        }
+
+        var table = document.createElement('table');
+        table.appendChild(
+          headerRow(['종목명', '현재가', '전일대비', '등락률', '통화', '장상태', '기준시각', ''])
+        );
+
+        rowsCache.forEach(function (r, i) {
+          table.appendChild(stockRow(r, i));
+        });
+
+        box.innerHTML = '';
+        var wrap = document.createElement('div');
+        wrap.className = 'table-wrap';
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+      }
+
+      function headerRow(labels) {
+        var tr = document.createElement('tr');
+        labels.forEach(function (label) {
+          var th = document.createElement('th');
+          th.textContent = label;
+          tr.appendChild(th);
+        });
+        return tr;
+      }
+
+      function stockRow(r, i) {
+        var chg = r['전일대비'];
+        var isNum = typeof chg === 'number';
+        var cls = isNum && chg !== 0 ? (chg > 0 ? 'up' : 'down') : '';
+        var sign = isNum && chg > 0 ? '+' : '';
+
+        var tr = document.createElement('tr');
+
+        // 종목명 + 코드/시장
+        var nameTd = document.createElement('td');
+        var name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = r['종목명'];
+        var meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = r['코드'] + ' · ' + r['시장'];
+        nameTd.appendChild(name);
+        nameTd.appendChild(meta);
+        tr.appendChild(nameTd);
+
+        tr.appendChild(cell(num(r['현재가'])));
+        tr.appendChild(cell(isNum ? sign + num(chg) : '-', cls));
+        tr.appendChild(
+          cell(
+            typeof r['등락률(%)'] === 'number' ? sign + r['등락률(%)'].toFixed(2) + '%' : '-',
+            cls
+          )
+        );
+        tr.appendChild(cell(r['통화']));
+        tr.appendChild(cell(r['장상태']));
+        tr.appendChild(cell(r['기준시각'], 'meta'));
+
+        var btnTd = document.createElement('td');
+        var btn = document.createElement('button');
+        btn.className = 'danger';
+        btn.textContent = '삭제';
+        btn.onclick = function () {
+          del(r['reutersCode'], r['종목명']);
+        };
+        btnTd.appendChild(btn);
+        tr.appendChild(btnTd);
+
+        return tr;
+      }
+
+      function cell(text, cls) {
+        var td = document.createElement('td');
+        td.textContent = text == null || text === '' ? '-' : text;
+        if (cls) td.className = cls;
+        return td;
+      }
+
+      function refresh() {
+        setButtons(true);
+        msg('시세 갱신 중…');
+
+        google.script.run
+          .withSuccessHandler(function (res) {
+            msg(
+              res.failed
+                ? res.updated + '개 갱신, ' + res.failed + '개 실패'
+                : res.updated + '개 종목 갱신됨'
+            );
+            load();
+          })
+          .withFailureHandler(fail)
+          .refreshPrices();
+      }
+
+      function del(code, name) {
+        if (!confirm(name + ' 을(를) 삭제할까요?')) return;
+
+        setButtons(true);
+        msg('삭제 중…');
+
+        google.script.run
+          .withSuccessHandler(function (res) {
+            msg(res.deleted ? name + ' 삭제됨' : '삭제할 종목을 찾지 못했습니다');
+            load();
+          })
+          .withFailureHandler(fail)
+          .deleteStocks([code]);
+      }
+
+      /* ---------------------------------------------------------- 유틸 */
+
+      function num(v) {
+        if (v === '' || v == null) return '-';
+        return typeof v === 'number'
+          ? v.toLocaleString('ko-KR', { maximumFractionDigits: 4 })
+          : String(v);
+      }
+
+      load();
+    </script>
+  </body>
+</html>

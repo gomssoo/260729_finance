@@ -1,0 +1,18 @@
+{
+  "name": "260729-finance",
+  "version": "1.0.0",
+  "description": "NPay증권(stock.naver.com) 기반 포트폴리오 시트 - Google Apps Script",
+  "private": true,
+  "scripts": {
+    "push": "clasp push --force",
+    "pull": "clasp pull",
+    "deploy": "clasp push --force && clasp create-deployment",
+    "open": "clasp open-script",
+    "logs": "clasp tail-logs",
+    "status": "clasp show-file-status",
+    "deployments": "clasp list-deployments"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0"
+  }
+}

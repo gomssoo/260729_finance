@@ -97,6 +97,12 @@ function dispatch(params) {
       return refreshPrices();
     case 'move':
       return moveStock(params.code, Number(params.offset));
+    case 'state':
+      return getState();
+    case 'trigger':
+      if (params.on === '0') return removeTrigger();
+      if (params.on === '1') return installTrigger();
+      return triggerStatus();
     case 'reorder':
       return reorderStocks(JSON.parse(params.codes || '[]'));
     case 'list':
@@ -454,6 +460,71 @@ function deleteStocks(reutersCodes) {
   return { deleted: deleted };
 }
 
+/* ---------------------------------------------------------------- 트리거 */
+
+// 트리거가 부를 함수. 이름을 바꾸면 기존 트리거가 끊기니 주의.
+var TRIGGER_HANDLER = 'scheduledRefresh';
+
+/**
+ * 1분마다 자동 실행되는 갱신.
+ *
+ * 장이 닫혀 있으면 값이 변하지 않으므로 건너뛴다. 트리거는 하루 1,440번
+ * 돌아 실행 시간 할당량(무료 90분/일)을 갉아먹는데, 장중에만 돌리면
+ * 대부분의 호출을 아낄 수 있다.
+ */
+function scheduledRefresh() {
+  if (!isAnyMarketOpen()) return;
+  refreshPrices();
+}
+
+/**
+ * 시트에 담긴 종목 중 하나라도 거래 시간대인지 본다.
+ * 마지막 조회에서 받은 '장상태' 를 그대로 쓰므로 별도 API 호출이 없다.
+ * 판단이 애매하면 (데이터가 없으면) 갱신하는 쪽을 택한다.
+ */
+function isAnyMarketOpen() {
+  var sheet = getSheet();
+  var last = sheet.getLastRow();
+  if (last < 2) return false;
+
+  var statuses = sheet.getRange(2, COL['장상태'], last - 1, 1).getValues();
+  var known = 0;
+  for (var i = 0; i < statuses.length; i++) {
+    var s = String(statuses[i][0] || '').trim();
+    if (!s) continue;
+    known++;
+    if (s === '장중' || s === '장전' || s === '장후') return true;
+  }
+
+  // 장상태를 한 번도 받아본 적이 없으면 일단 갱신해서 채운다.
+  return known === 0;
+}
+
+/** 1분 주기 트리거를 건다. 이미 있으면 지우고 다시 만든다. */
+function installTrigger() {
+  removeTrigger();
+  ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyMinutes(1).create();
+  return { installed: true };
+}
+
+function removeTrigger() {
+  var removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === TRIGGER_HANDLER) {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  });
+  return { removed: removed };
+}
+
+function triggerStatus() {
+  var count = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === TRIGGER_HANDLER;
+  }).length;
+  return { installed: count > 0, count: count };
+}
+
 /* ------------------------------------------------------------------ 정렬 */
 
 /**
@@ -574,6 +645,37 @@ function listStocks() {
       o['코드'] = normalizeCode(o['코드'], o['nationCode']);
       return o;
     });
+}
+
+/**
+ * 목록 + 부가 정보를 한 번에 준다.
+ * GAS 는 호출 1회당 2초 넘게 걸려서, 왕복을 나누지 않는 편이 훨씬 빠르다.
+ */
+function getState() {
+  var stocks = listStocks();
+  var updatedAt = '';
+  for (var i = 0; i < stocks.length; i++) {
+    var t = stocks[i]['갱신시각'];
+    if (t && String(t) > String(updatedAt)) updatedAt = String(t);
+  }
+
+  // 트리거 조회는 별도 권한이 필요하다. 아직 승인 전이어도
+  // 목록 자체는 보여줘야 하므로 실패를 삼킨다.
+  var autoRefresh = null;
+  try {
+    autoRefresh = triggerStatus().installed;
+  } catch (e) {
+    autoRefresh = null;
+  }
+
+  return {
+    stocks: stocks,
+    updatedAt: updatedAt,
+    autoRefresh: autoRefresh,
+    marketOpen: stocks.some(function (s) {
+      return String(s['장상태']) === '장중';
+    }),
+  };
 }
 
 function formatDateTime(d) {

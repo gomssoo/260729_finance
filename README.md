@@ -49,15 +49,48 @@ Pages 화면이 새 배포를 바라본다.
 ## API
 
 ```
-GET <배포URL>?action=list
+GET <배포URL>?action=state          목록 + 갱신시각 + 자동갱신 여부 (화면이 쓰는 것)
+             ?action=list           목록만
              ?action=search&query=삼성전자
              ?action=add&items=<JSON 배열>
              ?action=delete&codes=<JSON 배열>
-             ?action=refresh
+             ?action=move&code=005930&offset=-1
+             ?action=reorder&codes=<JSON 배열>
+             ?action=refresh        네이버에서 시세를 새로 받아 시트에 쓴다
+             ?action=trigger        자동갱신 상태 (on=1 설치, on=0 해제)
 ```
 
 `callback` 파라미터를 붙이면 JSONP 로 응답한다.
 응답은 `{"ok":true,"data":...}` 또는 `{"ok":false,"error":"..."}` 형태다.
+
+## 갱신 구조
+
+읽기와 쓰기를 분리했다.
+
+- **쓰기** — Apps Script 시간 기반 트리거가 1분마다 `scheduledRefresh()` 를 돌려
+  네이버에서 시세를 받아 시트에 쓴다. 브라우저를 열어두지 않아도 값이 쌓인다.
+- **읽기** — 화면은 `state` 로 시트를 읽기만 한다. 1분마다 다시 읽고,
+  탭이 숨겨져 있으면 건너뛴다. 숨어 있던 탭으로 돌아오면 즉시 한 번 읽는다.
+
+트리거는 장이 열려 있을 때만 실제 갱신을 한다. 시트의 `장상태` 열을 보고
+전부 장마감이면 그냥 빠져나온다. 하루 1,440번 도는 트리거가
+실행 시간 할당량(무료 90분/일)을 다 먹지 않게 하려는 것이다.
+
+## 성능
+
+GAS 웹앱은 호출 1회당 **2.2~3.3초**가 걸린다 (실측). 내역은:
+
+| 구간 | 시간 |
+| --- | --- |
+| TCP 연결 | 0.17s |
+| script.google.com → googleusercontent.com 리다이렉트 + 실행 | 2.4s |
+| 네이버 API 직접 호출 (참고) | 0.046s |
+
+리다이렉트 1회와 컨테이너 콜드스타트가 원인이라 코드로는 줄일 수 없다.
+그래서 화면은 마지막 목록을 `localStorage` 에 저장해두고 **먼저 그린 뒤**
+서버 응답으로 덮어쓴다. 체감상 즉시 뜨고, 값은 몇 초 뒤 최신으로 바뀐다.
+
+더 빠르게 하려면 GAS 를 벗어나야 한다 (Cloudflare Workers 등, 100ms 이하).
 
 ## 동작 방식
 

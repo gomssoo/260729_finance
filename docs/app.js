@@ -9,6 +9,13 @@
 var found = [];
 var seq = 0;
 
+// 서버 왕복이 2초 넘게 걸려서, 마지막 화면을 저장해뒀다가 즉시 그린다.
+var CACHE_KEY = 'npay.stocks.v1';
+
+// 화면이 시트를 다시 읽는 주기. 갱신 자체는 서버 트리거가 1분마다 한다.
+var POLL_MS = 60000;
+var pollTimer = null;
+
 /* ------------------------------------------------------------------ 통신 */
 
 function callApi(params) {
@@ -148,7 +155,7 @@ function add(i) {
 
   callApi({ action: 'add', items: JSON.stringify([s]) })
     .then(function (res) {
-      msg(res.added ? s.name + ' 추가됨' : s.name + ' 은(는) 이미 있습니다');
+      notice(res.added ? s.name + ' 추가됨' : s.name + ' 은(는) 이미 있습니다');
       $('results').innerHTML = '';
       $('query').value = '';
       return load();
@@ -158,16 +165,96 @@ function add(i) {
 
 /* ------------------------------------------------------------------ 목록 */
 
-function load() {
-  return callApi({ action: 'list' })
-    .then(function (rows) {
+/** 저장해둔 마지막 화면을 즉시 그린다. 없으면 false. */
+function renderCached() {
+  try {
+    var raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return false;
+
+    var cached = JSON.parse(raw);
+    if (!cached || !cached.stocks || !cached.stocks.length) return false;
+
+    renderList(cached.stocks);
+    setStatus(cached.updatedAt, true);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveCache(state) {
+  try {
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({ stocks: state.stocks, updatedAt: state.updatedAt })
+    );
+  } catch (e) {
+    // 용량 초과 등은 무시 — 캐시는 없어도 동작에 지장이 없다.
+  }
+}
+
+/**
+ * 서버에서 최신 상태를 읽어온다.
+ * quiet 이면 진행 문구를 띄우지 않는다 (주기적 폴링용).
+ */
+function load(quiet) {
+  return callApi({ action: 'state' })
+    .then(function (state) {
       setBusy(false);
-      renderList(rows || []);
+      renderList(state.stocks || []);
+      setStatus(state.updatedAt, false);
+      saveCache(state);
+
+      // null 이면 트리거 권한이 아직 승인되지 않은 상태다.
+      var chk = $('autoChk');
+      chk.disabled = state.autoRefresh === null;
+      chk.checked = state.autoRefresh === true;
+      chk.parentNode.title =
+        state.autoRefresh === null
+          ? '자동 갱신을 켜려면 스크립트 권한 승인이 필요합니다'
+          : '서버가 1분마다 시세를 갱신합니다';
+
+      return state;
     })
     .catch(function (err) {
-      $('list').innerHTML = '';
+      // 폴링 실패는 조용히 넘긴다. 화면에 이미 값이 떠 있는데
+      // 네트워크가 잠깐 끊겼다고 목록을 지워버리면 더 나쁘다.
+      if (quiet) {
+        setBusy(false);
+        return null;
+      }
+      if (!$('list').querySelector('table')) $('list').innerHTML = '';
       fail(err);
+      return null;
     });
+}
+
+// 사용자 동작 직후에는 그 결과 문구를 잠깐 남겨둔다.
+var holdMsgUntil = 0;
+
+function setStatus(updatedAt, fromCache) {
+  if (Date.now() < holdMsgUntil) return;
+  if (!updatedAt) {
+    msg('');
+    return;
+  }
+  var time = String(updatedAt).slice(11, 19) || String(updatedAt);
+  msg(time + ' 기준' + (fromCache ? ' (저장된 값)' : ''));
+}
+
+/** 결과 안내를 띄우고, 잠시 동안 기준시각 표시에 밀리지 않게 한다. */
+function notice(text) {
+  msg(text);
+  holdMsgUntil = Date.now() + 2500;
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(function () {
+    // 탭이 숨겨져 있으면 굳이 부르지 않는다.
+    if (document.hidden) return;
+    load(true);
+  }, POLL_MS);
 }
 
 function renderList(rows) {
@@ -272,7 +359,7 @@ function move(code, offset) {
 
   callApi({ action: 'move', code: code, offset: offset })
     .then(function (res) {
-      msg(res.moved ? '순서를 바꿨습니다' : '');
+      notice(res.moved ? '순서를 바꿨습니다' : '');
       return load();
     })
     .catch(fail);
@@ -293,7 +380,7 @@ function refresh() {
 
   callApi({ action: 'refresh' })
     .then(function (res) {
-      msg(
+      notice(
         res.failed
           ? res.updated + '개 갱신, ' + res.failed + '개 실패'
           : res.updated + '개 종목 갱신됨'
@@ -311,7 +398,7 @@ function del(code, name) {
 
   callApi({ action: 'delete', codes: JSON.stringify([code]) })
     .then(function (res) {
-      msg(res.deleted ? name + ' 삭제됨' : '삭제할 종목을 찾지 못했습니다');
+      notice(res.deleted ? name + ' 삭제됨' : '삭제할 종목을 찾지 못했습니다');
       return load();
     })
     .catch(fail);
@@ -325,4 +412,31 @@ $('query').addEventListener('keydown', function (e) {
   if (e.key === 'Enter') search();
 });
 
-load();
+$('autoChk').onchange = function () {
+  var on = this.checked;
+  this.disabled = true;
+  notice(on ? '자동 갱신 켜는 중…' : '자동 갱신 끄는 중…');
+
+  callApi({ action: 'trigger', on: on ? '1' : '0' })
+    .then(function () {
+      notice(on ? '자동 갱신 켜짐 (1분 주기)' : '자동 갱신 꺼짐');
+      return load(true);
+    })
+    .catch(function (err) {
+      $('autoChk').checked = !on;
+      $('autoChk').disabled = false;
+      fail(err);
+    });
+};
+
+// 숨어 있던 탭으로 돌아오면 기다리지 않고 바로 새 값을 읽는다.
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) load(true);
+});
+
+// 캐시가 있으면 먼저 그려서 빈 화면을 보이지 않게 하고,
+// 그 뒤에 서버 값으로 조용히 덮어쓴다.
+var hadCache = renderCached();
+if (!hadCache) $('list').innerHTML = '<div class="empty">불러오는 중…</div>';
+
+load(hadCache).then(startPolling);

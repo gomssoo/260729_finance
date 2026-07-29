@@ -200,6 +200,32 @@ td.down {
   color: var(--down);
 }
 
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auto input {
+  cursor: pointer;
+  accent-color: var(--green);
+}
+
+.auto:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
 td.move {
   padding: 4px 2px 4px 0;
   width: 1%;

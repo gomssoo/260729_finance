@@ -94,15 +94,17 @@ function dispatch(params) {
     case 'delete':
       return deleteStocks(JSON.parse(params.codes || '[]'));
     case 'refresh':
-      return refreshPrices();
+      return manualRefresh();
     case 'move':
       return moveStock(params.code, Number(params.offset));
     case 'state':
       return getState();
     case 'trigger':
       if (params.on === '0') return removeTrigger();
-      if (params.on === '1') return installTrigger();
+      if (params.on === '1') return installTrigger(params.minutes);
       return triggerStatus();
+    case 'stats':
+      return getRunStats();
     case 'reorder':
       return reorderStocks(JSON.parse(params.codes || '[]'));
     case 'list':
@@ -473,8 +475,84 @@ var TRIGGER_HANDLER = 'scheduledRefresh';
  * 대부분의 호출을 아낄 수 있다.
  */
 function scheduledRefresh() {
-  if (!isAnyMarketOpen()) return;
+  var started = Date.now();
+  if (!isAnyMarketOpen()) {
+    recordRun(Date.now() - started, true);
+    return;
+  }
   refreshPrices();
+  recordRun(Date.now() - started, false);
+}
+
+// 실행 시간 통계. 할당량(무료 90분/일)에 얼마나 근접하는지 보려고 남긴다.
+var PROP_RUN_STATS = 'RUN_STATS';
+
+/**
+ * 화면의 '시세 새로고침' 버튼용.
+ *
+ * 트리거와 같은 refreshPrices() 를 부르지만 할당량 항목이 다르다.
+ * 트리거 실행은 '트리거 총 실행시간', 웹앱 호출은 '스크립트 실행시간' 에
+ * 잡히므로 서로를 잠식하지 않는다. 다만 둘 다 한도가 90분/일이다.
+ */
+function manualRefresh() {
+  var started = Date.now();
+  var result = refreshPrices();
+  recordRun(Date.now() - started, false, true);
+  return result;
+}
+
+function recordRun(ms, skipped, manual) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var s = JSON.parse(props.getProperty(PROP_RUN_STATS) || '{}');
+
+    if (manual) {
+      s.manualRuns = (s.manualRuns || 0) + 1;
+      s.manualMs = (s.manualMs || 0) + ms;
+    } else {
+      s.runs = (s.runs || 0) + 1;
+      s.skipped = (s.skipped || 0) + (skipped ? 1 : 0);
+      s.totalMs = (s.totalMs || 0) + ms;
+    }
+    s.maxMs = Math.max(s.maxMs || 0, ms);
+    if (!s.since) s.since = formatDateTime(new Date());
+
+    props.setProperty(PROP_RUN_STATS, JSON.stringify(s));
+  } catch (e) {
+    // 통계는 부가 기능이라 실패해도 갱신 자체를 막지 않는다.
+  }
+}
+
+function getRunStats() {
+  var s = JSON.parse(
+    PropertiesService.getScriptProperties().getProperty(PROP_RUN_STATS) || '{}'
+  );
+  var actual = (s.runs || 0) - (s.skipped || 0);
+
+  var manualRuns = s.manualRuns || 0;
+
+  return {
+    since: s.since || '',
+
+    // 트리거 (자동 갱신)
+    runs: s.runs || 0,
+    skipped: s.skipped || 0,
+    actualRefreshes: actual,
+    avgActiveMs: actual ? Math.round(s.totalMs / actual) : 0,
+    triggerMinutes: Math.round(((s.totalMs || 0) / 60000) * 10) / 10,
+
+    // 수동 (새로고침 버튼)
+    manualRuns: manualRuns,
+    manualAvgMs: manualRuns ? Math.round(s.manualMs / manualRuns) : 0,
+    manualMinutes: Math.round(((s.manualMs || 0) / 60000) * 10) / 10,
+
+    maxMs: s.maxMs || 0,
+  };
+}
+
+function resetRunStats() {
+  PropertiesService.getScriptProperties().deleteProperty(PROP_RUN_STATS);
+  return { reset: true };
 }
 
 /**
@@ -500,11 +578,28 @@ function isAnyMarketOpen() {
   return known === 0;
 }
 
-/** 1분 주기 트리거를 건다. 이미 있으면 지우고 다시 만든다. */
-function installTrigger() {
+// Apps Script 는 분 단위 트리거로 1·5·10·15·30 만 받는다. 2분은 없다.
+var TRIGGER_MINUTES = [1, 5, 10, 15, 30];
+var PROP_INTERVAL = 'REFRESH_INTERVAL_MIN';
+
+/** 시간 기반 트리거를 건다. 이미 있으면 지우고 다시 만든다. */
+function installTrigger(minutes) {
+  var interval = Number(minutes) || Number(getInterval());
+  if (TRIGGER_MINUTES.indexOf(interval) === -1) {
+    throw new Error('주기는 ' + TRIGGER_MINUTES.join('/') + '분만 됩니다 (요청: ' + interval + ')');
+  }
+
   removeTrigger();
-  ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyMinutes(1).create();
-  return { installed: true };
+  ScriptApp.newTrigger(TRIGGER_HANDLER).timeBased().everyMinutes(interval).create();
+  PropertiesService.getScriptProperties().setProperty(PROP_INTERVAL, String(interval));
+
+  return { installed: true, minutes: interval };
+}
+
+function getInterval() {
+  return Number(
+    PropertiesService.getScriptProperties().getProperty(PROP_INTERVAL) || 5
+  );
 }
 
 function removeTrigger() {
@@ -522,7 +617,7 @@ function triggerStatus() {
   var count = ScriptApp.getProjectTriggers().filter(function (t) {
     return t.getHandlerFunction() === TRIGGER_HANDLER;
   }).length;
-  return { installed: count > 0, count: count };
+  return { installed: count > 0, count: count, minutes: getInterval() };
 }
 
 /* ------------------------------------------------------------------ 정렬 */
@@ -662,8 +757,11 @@ function getState() {
   // 트리거 조회는 별도 권한이 필요하다. 아직 승인 전이어도
   // 목록 자체는 보여줘야 하므로 실패를 삼킨다.
   var autoRefresh = null;
+  var interval = 5;
   try {
-    autoRefresh = triggerStatus().installed;
+    var st = triggerStatus();
+    autoRefresh = st.installed;
+    interval = st.minutes;
   } catch (e) {
     autoRefresh = null;
   }
@@ -672,6 +770,7 @@ function getState() {
     stocks: stocks,
     updatedAt: updatedAt,
     autoRefresh: autoRefresh,
+    intervalMinutes: interval,
     marketOpen: stocks.some(function (s) {
       return String(s['장상태']) === '장중';
     }),

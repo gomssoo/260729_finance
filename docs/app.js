@@ -12,8 +12,8 @@ var seq = 0;
 // 서버 왕복이 2초 넘게 걸려서, 마지막 화면을 저장해뒀다가 즉시 그린다.
 var CACHE_KEY = 'npay.stocks.v1';
 
-// 화면이 시트를 다시 읽는 주기. 갱신 자체는 서버 트리거가 1분마다 한다.
-var POLL_MS = 60000;
+// 화면이 시트를 다시 읽는 주기. 서버 트리거 주기를 받아오면 그에 맞춘다.
+var POLL_MS = 300000;
 var pollTimer = null;
 
 /* ------------------------------------------------------------------ 통신 */
@@ -207,12 +207,17 @@ function load(quiet) {
 
       // null 이면 트리거 권한이 아직 승인되지 않은 상태다.
       var chk = $('autoChk');
+      var mins = state.intervalMinutes || 5;
       chk.disabled = state.autoRefresh === null;
       chk.checked = state.autoRefresh === true;
+      $('autoLabel').textContent = '자동 갱신 (' + mins + '분)';
       chk.parentNode.title =
         state.autoRefresh === null
           ? '자동 갱신을 켜려면 스크립트 권한 승인이 필요합니다'
-          : '서버가 1분마다 시세를 갱신합니다';
+          : '서버가 ' + mins + '분마다 시세를 갱신합니다';
+
+      // 서버 갱신 주기에 맞춰 화면 폴링도 조정한다.
+      setPollInterval(mins * 60000);
 
       return state;
     })
@@ -255,6 +260,13 @@ function startPolling() {
     if (document.hidden) return;
     load(true);
   }, POLL_MS);
+}
+
+/** 서버 갱신 주기보다 자주 읽어봐야 같은 값이라 주기를 맞춘다. */
+function setPollInterval(ms) {
+  if (!ms || ms === POLL_MS) return;
+  POLL_MS = ms;
+  if (pollTimer) startPolling();
 }
 
 function renderList(rows) {

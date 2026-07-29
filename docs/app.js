@@ -117,6 +117,7 @@ function renderCached() {
     var cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
     if (!cached || !cached.stocks || !cached.stocks.length) return false;
 
+    renderIndices(cached.indices);
     renderList(cached.stocks);
     setStatus(cached.updatedAt, true);
     return true;
@@ -129,7 +130,11 @@ function saveCache(state) {
   try {
     localStorage.setItem(
       CACHE_KEY,
-      JSON.stringify({ stocks: state.stocks, updatedAt: state.updatedAt })
+      JSON.stringify({
+        stocks: state.stocks,
+        indices: state.indices,
+        updatedAt: state.updatedAt,
+      })
     );
   } catch (e) {
     // 용량 초과 등은 무시 — 캐시는 없어도 동작에 지장이 없다.
@@ -140,6 +145,7 @@ function load(quiet) {
   return callApi({ action: 'state' })
     .then(function (state) {
       setBusy(false);
+      renderIndices(state.indices);
       renderList(state.stocks || []);
       setStatus(state.updatedAt, false);
       saveCache(state);
@@ -254,6 +260,50 @@ function renderList(rows) {
   });
 }
 
+/** 관심 종목 위에 띄우는 주요 지수. 카드보다 납작한 띠 형태로 둔다. */
+function renderIndices(list) {
+  var box = $('indices');
+  box.innerHTML = '';
+  if (!list || !list.length) return;
+
+  var strip = el('div', 'index-strip');
+
+  list.forEach(function (ix) {
+    var item = el('div', 'index-item');
+    item.appendChild(el('div', 'index-label', ix.label));
+
+    if (!ix.ok) {
+      item.appendChild(el('div', 'index-price muted', '조회 실패'));
+      strip.appendChild(item);
+      return;
+    }
+
+    var dir = typeof ix.change !== 'number' || ix.change === 0 ? 'flat' : ix.change > 0 ? 'up' : 'down';
+
+    var line = el('div', 'index-line');
+    line.appendChild(el('span', 'index-price', num(ix.price, 2)));
+
+    var chg = el('span', 'index-change ' + dir);
+    if (typeof ix.rate === 'number') {
+      chg.textContent =
+        (dir === 'up' ? '▲' : dir === 'down' ? '▼' : '') +
+        ' ' +
+        (ix.rate > 0 ? '+' : '') +
+        ix.rate.toFixed(2) +
+        '%';
+    }
+    line.appendChild(chg);
+    item.appendChild(line);
+
+    if (ix.status !== '장중') item.classList.add('closed');
+    item.title = ix.status + ' · ' + ix.tradedAt + ' 기준';
+
+    strip.appendChild(item);
+  });
+
+  box.appendChild(strip);
+}
+
 function groupHeader(nationCode, count) {
   var info = NATION_LABEL[nationCode] || { code: nationCode, name: '' };
 
@@ -327,8 +377,38 @@ function stockCard(r, index, total) {
   card.title =
     (card.title ? card.title + '\n' : '') + status + ' · ' + r['시장'] + ' · ' + r['통화'];
 
-  // 기준시각만 남긴다. 시장명과 통화는 국가 그룹으로 이미 드러난다.
-  card.appendChild(el('div', 'card-meta', timePart(r['기준시각'])));
+  // 시간외(NXT) 거래가 있으면 정규장 아래에 덧붙인다.
+  if (typeof r['시간외'] === 'number' && r['시간외'] > 0) {
+    var oChg = r['시간외대비'];
+    var oRate = r['시간외등락률'];
+    var oDir = typeof oChg !== 'number' || oChg === 0 ? 'flat' : oChg > 0 ? 'up' : 'down';
+
+    var over = el('div', 'card-over');
+    over.appendChild(el('span', 'over-tag', '시간외'));
+    over.appendChild(el('span', 'over-price', num(r['시간외'], decimals)));
+
+    var oc = el('span', 'over-change ' + oDir);
+    if (typeof oRate === 'number') {
+      oc.textContent = (oRate > 0 ? '+' : '') + oRate.toFixed(2) + '%';
+    }
+    over.appendChild(oc);
+    over.title = '시간외 ' + timePart(r['시간외시각']) + ' 기준';
+    card.appendChild(over);
+  }
+
+  // 기준시각 + 추세. 시장명과 통화는 국가 그룹으로 이미 드러난다.
+  var meta = el('div', 'card-meta');
+  meta.appendChild(el('span', '', timePart(r['기준시각'])));
+
+  var trend = String(r['추세'] || '');
+  if (trend && trend !== '-') {
+    var cls = trend === '상향' ? 'up' : trend === '하향' ? 'down' : 'flat';
+    var tag = el('span', 'trend ' + cls, trend);
+    // 값이 적으면 판정이 흔들린다. 몇 개로 본 것인지 알려준다.
+    tag.title = '최근 ' + (r['이력수'] || 0) + '개 시세 기준';
+    meta.appendChild(tag);
+  }
+  card.appendChild(meta);
 
   return card;
 }
@@ -631,7 +711,47 @@ function remove(code, name) {
     .catch(fail);
 }
 
+/* ---------------------------------------------------------------- 테마 */
+
+var THEME_KEY = 'npay.theme';
+
+// system 은 저장하지 않는다. 값이 없으면 OS 설정을 따른다는 뜻.
+var THEMES = ['system', 'light', 'dark'];
+var THEME_ICON = { system: '◐', light: '☀', dark: '☾' };
+var THEME_NAME = { system: '시스템 설정', light: '라이트', dark: '다크' };
+
+function currentTheme() {
+  var saved = null;
+  try {
+    saved = localStorage.getItem(THEME_KEY);
+  } catch (e) {}
+  return THEMES.indexOf(saved) > 0 ? saved : 'system';
+}
+
+function applyTheme(theme) {
+  var root = document.documentElement;
+  if (theme === 'system') delete root.dataset.theme;
+  else root.dataset.theme = theme;
+
+  try {
+    if (theme === 'system') localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, theme);
+  } catch (e) {}
+
+  var btn = $('themeBtn');
+  btn.textContent = THEME_ICON[theme];
+  btn.title = '테마: ' + THEME_NAME[theme] + ' (눌러서 변경)';
+}
+
+function cycleTheme() {
+  var next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
+  applyTheme(next);
+}
+
 /* ------------------------------------------------------------------ 시작 */
+
+applyTheme(currentTheme());
+$('themeBtn').onclick = cycleTheme;
 
 $('refreshBtn').onclick = refresh;
 $('addBtn').onclick = openModal;

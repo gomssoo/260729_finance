@@ -31,7 +31,23 @@ var HEADERS = [
   '장상태',
   '기준시각',
   '갱신시각',
+  '추세',
+  // 시간외(NXT 등) 시세. 정규장 마감 뒤 20시까지 거래된다.
+  '시간외',
+  '시간외대비',
+  '시간외등락률',
+  '시간외시각',
+  '이력', // 최근 시세를 쉼표로 이어 붙인 문자열. 추세 계산용.
 ];
+
+// 추세를 볼 때 쓰는 과거 값 개수. 이력은 이보다 하나 많게 보관해
+// 구간 변동률을 HISTORY_SIZE 개 만들 수 있게 한다.
+var HISTORY_SIZE = 5;
+
+// 구간 변동률 평균이 이 값을 넘으면 상향/하향, 안이면 횡보.
+// 5분 간격 시세라 한 구간의 움직임이 작다. 0.15% 로 두면 5회 연속
+// 올라도 횡보로 나와서, 실제 분 단위 변동폭에 맞춰 0.03% 로 잡았다.
+var TREND_THRESHOLD = 0.03;
 
 var COL = {};
 HEADERS.forEach(function (h, i) {
@@ -168,6 +184,10 @@ function setupSheet() {
   sheet.getRange(2, COL['코드'], rows, 1).setNumberFormat('@');
   sheet.getRange(2, COL['reutersCode'], rows, 2).setNumberFormat('@');
 
+  // 이력은 '220000,219500,…' 문자열이라 숫자로 해석되면 안 된다.
+  sheet.getRange(2, COL['이력'], rows, 1).setNumberFormat('@');
+  sheet.hideColumns(COL['이력']);
+
   sheet.getRange(2, COL['현재가'], sheet.getMaxRows() - 1, 2).setNumberFormat('#,##0.####');
   sheet.getRange(2, COL['등락률(%)'], sheet.getMaxRows() - 1, 1).setNumberFormat('0.00');
 
@@ -182,7 +202,51 @@ function getSheet() {
   var sheet = SpreadsheetApp.openById(getSpreadsheetId()).getSheetByName(SHEET_NAME);
   // 헤더가 아직 없는 새 시트라면 초기화부터 한다.
   if (!sheet || sheet.getLastRow() === 0) return setupSheet();
+
+  migrateIfNeeded(sheet);
   return sheet;
+}
+
+/**
+ * 열이 추가된 뒤에도 기존 데이터가 어긋나지 않게 맞춘다.
+ *
+ * 헤더 이름으로 옛 위치를 찾아 새 배치로 옮긴다. 열을 그냥 늘리면
+ * '추세' 자리에 '이력' 값이 들어가는 식으로 어긋난다.
+ */
+function migrateIfNeeded(sheet) {
+  var width = sheet.getLastColumn();
+  var header = sheet.getRange(1, 1, 1, Math.max(width, 1)).getValues()[0];
+
+  var same =
+    header.length === HEADERS.length &&
+    HEADERS.every(function (h, i) {
+      return String(header[i]) === h;
+    });
+  if (same) return;
+
+  var oldIndex = {};
+  header.forEach(function (h, i) {
+    if (h) oldIndex[String(h)] = i;
+  });
+
+  var last = sheet.getLastRow();
+  var rows = last > 1 ? sheet.getRange(2, 1, last - 1, width).getValues() : [];
+
+  var moved = rows.map(function (r) {
+    return HEADERS.map(function (h) {
+      var i = oldIndex[h];
+      return i === undefined ? '' : r[i];
+    });
+  });
+
+  setupSheet(); // 헤더·서식을 새 구성으로 다시 깐다
+
+  if (moved.length) {
+    sheet.getRange(2, COL['코드'], moved.length, 1).setNumberFormat('@');
+    sheet.getRange(2, COL['reutersCode'], moved.length, 2).setNumberFormat('@');
+    sheet.getRange(2, COL['이력'], moved.length, 1).setNumberFormat('@');
+    sheet.getRange(2, 1, moved.length, HEADERS.length).setValues(moved);
+  }
 }
 
 /* ------------------------------------------------------------------ 검색 */
@@ -295,6 +359,12 @@ function refreshPrices() {
   var now = new Date();
   var failed = 0;
 
+  // 이력에 같은 체결을 두 번 넣지 않으려고 기준시각을 함께 모은다.
+  var tradedAts = [];
+
+  // 시간외 시세는 정규장 열들과 떨어져 있어 따로 모았다가 한 번에 쓴다.
+  var overValues = [];
+
   // 현재가~기준시각 6개 열을 한 번에 덮어쓴다.
   var width = COL['기준시각'] - COL['현재가'] + 1;
   var values = responses.map(function (res, i) {
@@ -311,11 +381,16 @@ function refreshPrices() {
 
     if (!data || !data.closePrice) {
       failed++;
+      tradedAts.push('');
+      overValues.push(['', '', '', '']);
       return new Array(width).fill('');
     }
 
     var exchange = data.stockExchangeType || {};
     var signed = signedChange(data);
+    var tradedAt = data.localTradedAt ? formatLocalTradedAt(data.localTradedAt) : '';
+    tradedAts.push(tradedAt);
+    overValues.push(overMarketRow(data.overMarketPriceInfo));
 
     return [
       toNumber(data.closePrice),
@@ -323,7 +398,7 @@ function refreshPrices() {
       toNumber(data.fluctuationsRatio),
       currencyOf(exchange),
       marketStatusLabel(data.marketStatus),
-      data.localTradedAt ? formatLocalTradedAt(data.localTradedAt) : '',
+      tradedAt,
     ];
   });
 
@@ -337,9 +412,164 @@ function refreshPrices() {
     .getRange(2, COL['갱신시각'], values.length, 1)
     .setValue(formatDateTime(now));
 
+  sheet.getRange(2, COL['시간외'], overValues.length, 2).setNumberFormat('#,##0.####');
+  sheet.getRange(2, COL['시간외등락률'], overValues.length, 1).setNumberFormat('0.00');
+  sheet.getRange(2, COL['시간외'], overValues.length, 4).setValues(overValues);
+
+  updateTrends(sheet, values, tradedAts);
   applyChangeColors(sheet, last);
 
   return { updated: codes.length - failed, failed: failed };
+}
+
+/* ------------------------------------------------------------------ 지수 */
+
+// 화면 맨 위에 띄우는 주요 지수. 시트에 저장하지 않고 그때그때 조회한다.
+// 고정 목록이라 이력을 쌓을 이유가 없고, 종목 순서 관리와도 무관하다.
+var INDICES = [
+  { label: '코스피', path: 'https://m.stock.naver.com/api/index/KOSPI/basic' },
+  { label: '나스닥 100 선물', path: 'https://api.stock.naver.com/futures/NQcv1/basic' },
+  { label: '필라델피아 반도체', path: 'https://api.stock.naver.com/index/.SOX/basic' },
+];
+
+function getIndices() {
+  var responses = UrlFetchApp.fetchAll(
+    INDICES.map(function (ix) {
+      return { url: ix.path, headers: REQUEST_HEADERS, muteHttpExceptions: true };
+    })
+  );
+
+  return responses.map(function (res, i) {
+    var meta = INDICES[i];
+    var data = null;
+
+    if (res.getResponseCode() === 200) {
+      try {
+        data = JSON.parse(res.getContentText());
+      } catch (e) {
+        data = null;
+      }
+    }
+    if (!data || !data.closePrice) return { label: meta.label, ok: false };
+
+    return {
+      label: meta.label,
+      ok: true,
+      price: toNumber(data.closePrice),
+      change: signedChange(data),
+      rate: toNumber(data.fluctuationsRatio),
+      status: marketStatusLabel(data.marketStatus),
+      tradedAt: data.localTradedAt ? formatLocalTradedAt(data.localTradedAt) : '',
+    };
+  });
+}
+
+/**
+ * 시간외 시세를 [가격, 전일대비, 등락률, 시각] 으로 뽑는다.
+ *
+ * 국내 종목은 정규장(15:30) 뒤에도 NXT 등에서 20시까지 거래된다.
+ * 그 값이 overMarketPriceInfo 에 담겨 온다. ETF 처럼 시간외가 없는
+ * 종목은 이 필드가 통째로 없으므로 빈 행을 돌려준다.
+ */
+function overMarketRow(info) {
+  if (!info || !info.overPrice) return ['', '', '', ''];
+
+  return [
+    toNumber(info.overPrice),
+    signedChange({
+      compareToPreviousClosePrice: info.compareToPreviousClosePrice,
+      compareToPreviousPrice: info.compareToPreviousPrice,
+    }),
+    toNumber(info.fluctuationsRatio),
+    info.localTradedAt ? formatLocalTradedAt(info.localTradedAt) : '',
+  ];
+}
+
+/* ------------------------------------------------------------------ 추세 */
+
+/**
+ * 이력 열을 갱신하고 추세를 다시 계산한다.
+ *
+ * 행이 늘어나지는 않는다. 종목마다 한 칸에 최근 값만 쉼표로 이어 두고,
+ * 새 값이 들어오면 맨 앞을 밀어내는 고정 길이 큐로 쓴다.
+ */
+function updateTrends(sheet, values, tradedAts) {
+  var count = values.length;
+  if (!count) return;
+
+  var priceIdx = 0; // values 각 행의 첫 칸이 현재가
+  var histRange = sheet.getRange(2, COL['이력'], count, 1);
+  var prevRange = sheet.getRange(2, COL['기준시각'], count, 1);
+
+  var histories = histRange.getValues();
+  var prevTradedAts = prevRange.getValues();
+
+  var trends = [];
+  var nextHistories = [];
+
+  for (var i = 0; i < count; i++) {
+    var price = values[i][priceIdx];
+    var history = parseHistory(histories[i][0]);
+
+    // 조회 실패(빈 값)면 이력을 건드리지 않는다.
+    // 체결 시각이 그대로면 같은 값이 또 온 것이라 넣지 않는다.
+    // 그러지 않으면 장마감 뒤 같은 가격이 쌓여 횡보로 굳어버린다.
+    var isNew =
+      typeof price === 'number' &&
+      price > 0 &&
+      String(tradedAts[i] || '') !== String(prevTradedAts[i][0] || '');
+
+    if (isNew) {
+      history.push(price);
+      if (history.length > HISTORY_SIZE + 1) {
+        history = history.slice(history.length - (HISTORY_SIZE + 1));
+      }
+    }
+
+    nextHistories.push([history.join(',')]);
+    trends.push([trendOf(history)]);
+  }
+
+  histRange.setNumberFormat('@').setValues(nextHistories);
+  sheet.getRange(2, COL['추세'], count, 1).setValues(trends);
+}
+
+function parseHistory(raw) {
+  return String(raw || '')
+    .split(',')
+    .map(function (v) {
+      return Number(String(v).trim());
+    })
+    .filter(function (n) {
+      return !isNaN(n) && n > 0;
+    });
+}
+
+/**
+ * 구간 변동률의 평균으로 방향을 정한다.
+ *
+ * 절대 가격차가 아니라 비율을 쓰는 이유는, 1,400,000원짜리와 5,500원짜리를
+ * 같은 잣대로 보기 위해서다. 값이 모자라면 '-' 를 돌려 판정을 미룬다.
+ */
+function trendOf(history) {
+  if (!history || history.length < 3) return '-';
+
+  var deltas = [];
+  for (var i = 1; i < history.length; i++) {
+    var prev = history[i - 1];
+    if (!prev) continue;
+    deltas.push(((history[i] - prev) / prev) * 100);
+  }
+  if (!deltas.length) return '-';
+
+  var sum = deltas.reduce(function (a, b) {
+    return a + b;
+  }, 0);
+  var avg = sum / deltas.length;
+
+  if (avg > TREND_THRESHOLD) return '상향';
+  if (avg < -TREND_THRESHOLD) return '하향';
+  return '횡보';
 }
 
 /**
@@ -414,8 +644,19 @@ function marketStatusLabel(status) {
 
 /** '2026-07-28T12:05:23-04:00' → 현지 시각 문자열 (오프셋은 그대로 보존) */
 function formatLocalTradedAt(iso) {
-  var m = String(iso).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
-  return m ? m[1] + ' ' + m[2] : String(iso);
+  var s = String(iso);
+
+  // '2026-07-29T11:48:45-04:00' 처럼 오프셋이 붙어 온다.
+  // 오프셋을 무시하고 앞부분만 자르면 미국 종목에 미국 시각이 찍혀
+  // 국내 종목과 나란히 놓였을 때 헷갈린다. 한국 시간으로 바꿔 통일한다.
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return Utilities.formatDate(d, 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
+  }
+
+  // 파싱에 실패하면 원본 앞부분이라도 보여준다.
+  var m = s.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] + ' ' + m[2] : s;
 }
 
 function applyChangeColors(sheet, lastRow) {
@@ -767,6 +1008,10 @@ function listStocks() {
       // 앞자리 0 이 날아간 코드를 화면에 그대로 보여주지 않는다.
       o['reutersCode'] = normalizeCode(o['reutersCode'], o['nationCode']);
       o['코드'] = normalizeCode(o['코드'], o['nationCode']);
+
+      // 이력 원본은 화면에서 쓰지 않는다. 개수만 넘겨 판정 신뢰도를 표시한다.
+      o['이력수'] = parseHistory(o['이력']).length;
+      delete o['이력'];
       return o;
     });
 }
@@ -795,8 +1040,18 @@ function getState() {
     autoRefresh = null;
   }
 
+  // 지수는 왕복 한 번에 같이 실어 보낸다. GAS 는 호출당 2초라
+  // 따로 부르면 그만큼 화면이 늦어진다.
+  var indices = [];
+  try {
+    indices = getIndices();
+  } catch (e) {
+    indices = [];
+  }
+
   return {
     stocks: stocks,
+    indices: indices,
     updatedAt: updatedAt,
     autoRefresh: autoRefresh,
     intervalMinutes: interval,

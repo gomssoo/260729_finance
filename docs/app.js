@@ -11,10 +11,15 @@ var seq = 0;
 
 // 서버 왕복이 2초 넘게 걸려서, 마지막 화면을 저장해뒀다가 즉시 그린다.
 var CACHE_KEY = 'npay.stocks.v1';
+var RECENT_KEY = 'npay.recent.v1';
 
 // 화면이 시트를 다시 읽는 주기. 서버 트리거 주기를 받아오면 그에 맞춘다.
 var POLL_MS = 300000;
 var pollTimer = null;
+
+var $ = function (id) {
+  return document.getElementById(id);
+};
 
 /* ------------------------------------------------------------------ 통신 */
 
@@ -66,10 +71,6 @@ function callApi(params) {
 
 /* -------------------------------------------------------------- 화면 유틸 */
 
-var $ = function (id) {
-  return document.getElementById(id);
-};
-
 function msg(text, isError) {
   var el = $('msg');
   el.textContent = text || '';
@@ -82,96 +83,38 @@ function fail(err) {
 }
 
 function setBusy(busy) {
-  $('searchBtn').disabled = busy;
   $('refreshBtn').disabled = busy;
+  $('addBtn').disabled = busy;
 }
 
-function num(v) {
+// 사용자 동작 직후에는 그 결과 문구를 잠깐 남겨둔다.
+var holdMsgUntil = 0;
+
+function notice(text) {
+  msg(text);
+  holdMsgUntil = Date.now() + 2500;
+}
+
+function num(v, digits) {
   if (v === '' || v === null || v === undefined) return '-';
-  return typeof v === 'number' ? v.toLocaleString('ko-KR', { maximumFractionDigits: 4 }) : String(v);
-}
-
-/* ------------------------------------------------------------------ 검색 */
-
-function search() {
-  var q = $('query').value.trim();
-  if (!q) return;
-
-  setBusy(true);
-  msg('검색 중…');
-  $('results').innerHTML = '';
-
-  callApi({ action: 'search', query: q })
-    .then(function (items) {
-      setBusy(false);
-      msg('');
-      renderResults(items || []);
-    })
-    .catch(fail);
-}
-
-function renderResults(items) {
-  found = items;
-  var box = $('results');
-  box.innerHTML = '';
-
-  if (!found.length) {
-    box.innerHTML = '<div class="empty">검색 결과가 없습니다.</div>';
-    return;
-  }
-
-  found.forEach(function (s, i) {
-    var row = document.createElement('div');
-    row.className = 'item';
-
-    var info = document.createElement('div');
-    var name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = s.name;
-    var meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = s.code + ' · ' + s.market + ' · ' + s.nation;
-    info.appendChild(name);
-    info.appendChild(meta);
-
-    var btn = document.createElement('button');
-    btn.textContent = '추가';
-    btn.onclick = function () {
-      add(i);
-    };
-
-    row.appendChild(info);
-    row.appendChild(btn);
-    box.appendChild(row);
+  if (typeof v !== 'number') return String(v);
+  return v.toLocaleString('ko-KR', {
+    minimumFractionDigits: digits || 0,
+    maximumFractionDigits: digits === undefined ? 4 : digits,
   });
 }
 
-function add(i) {
-  var s = found[i];
-  if (!s) return;
-
-  setBusy(true);
-  msg(s.name + ' 추가 중…');
-
-  callApi({ action: 'add', items: JSON.stringify([s]) })
-    .then(function (res) {
-      notice(res.added ? s.name + ' 추가됨' : s.name + ' 은(는) 이미 있습니다');
-      $('results').innerHTML = '';
-      $('query').value = '';
-      return load();
-    })
-    .catch(fail);
+/** '2026-07-29 16:10:21' → '16:10:21' */
+function timePart(s) {
+  var m = String(s || '').match(/\d{2}:\d{2}:\d{2}/);
+  return m ? m[0] : '';
 }
 
 /* ------------------------------------------------------------------ 목록 */
 
-/** 저장해둔 마지막 화면을 즉시 그린다. 없으면 false. */
 function renderCached() {
   try {
-    var raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return false;
-
-    var cached = JSON.parse(raw);
+    var cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
     if (!cached || !cached.stocks || !cached.stocks.length) return false;
 
     renderList(cached.stocks);
@@ -193,10 +136,6 @@ function saveCache(state) {
   }
 }
 
-/**
- * 서버에서 최신 상태를 읽어온다.
- * quiet 이면 진행 문구를 띄우지 않는다 (주기적 폴링용).
- */
 function load(quiet) {
   return callApi({ action: 'state' })
     .then(function (state) {
@@ -204,21 +143,7 @@ function load(quiet) {
       renderList(state.stocks || []);
       setStatus(state.updatedAt, false);
       saveCache(state);
-
-      // null 이면 트리거 권한이 아직 승인되지 않은 상태다.
-      var chk = $('autoChk');
-      var mins = state.intervalMinutes || 5;
-      chk.disabled = state.autoRefresh === null;
-      chk.checked = state.autoRefresh === true;
-      $('autoLabel').textContent = '자동 갱신 (' + mins + '분)';
-      chk.parentNode.title =
-        state.autoRefresh === null
-          ? '자동 갱신을 켜려면 스크립트 권한 승인이 필요합니다'
-          : '서버가 ' + mins + '분마다 시세를 갱신합니다';
-
-      // 서버 갱신 주기에 맞춰 화면 폴링도 조정한다.
-      setPollInterval(mins * 60000);
-
+      applyTriggerState(state);
       return state;
     })
     .catch(function (err) {
@@ -228,29 +153,40 @@ function load(quiet) {
         setBusy(false);
         return null;
       }
-      if (!$('list').querySelector('table')) $('list').innerHTML = '';
+      if (!$('list').querySelector('.grid')) $('list').innerHTML = '';
       fail(err);
       return null;
     });
 }
 
-// 사용자 동작 직후에는 그 결과 문구를 잠깐 남겨둔다.
-var holdMsgUntil = 0;
+function applyTriggerState(state) {
+  var chk = $('autoChk');
+  var mins = state.intervalMinutes || 5;
 
-function setStatus(updatedAt, fromCache) {
-  if (Date.now() < holdMsgUntil) return;
-  if (!updatedAt) {
-    msg('');
-    return;
-  }
-  var time = String(updatedAt).slice(11, 19) || String(updatedAt);
-  msg(time + ' 기준' + (fromCache ? ' (저장된 값)' : ''));
+  // null 이면 트리거 권한이 아직 승인되지 않은 상태다.
+  chk.disabled = state.autoRefresh === null;
+  chk.checked = state.autoRefresh === true;
+  $('autoLabel').textContent = '자동 갱신 (' + mins + '분)';
+  chk.parentNode.title =
+    state.autoRefresh === null
+      ? '자동 갱신을 켜려면 스크립트 권한 승인이 필요합니다'
+      : '서버가 ' + mins + '분마다 시세를 갱신합니다';
+
+  setPollInterval(mins * 60000);
 }
 
-/** 결과 안내를 띄우고, 잠시 동안 기준시각 표시에 밀리지 않게 한다. */
-function notice(text) {
-  msg(text);
-  holdMsgUntil = Date.now() + 2500;
+function setStatus(updatedAt, fromCache) {
+  var live = $('live');
+  var time = timePart(updatedAt);
+
+  live.hidden = !time;
+  if (time) {
+    $('liveTime').textContent = (fromCache ? '' : 'LIVE ') + time;
+    live.title = updatedAt + (fromCache ? ' (저장된 값)' : '') + ' 기준';
+  }
+
+  if (Date.now() < holdMsgUntil) return;
+  msg('');
 }
 
 function startPolling() {
@@ -269,126 +205,248 @@ function setPollInterval(ms) {
   if (pollTimer) startPolling();
 }
 
+/* ------------------------------------------------------------------ 카드 */
+
 function renderList(rows) {
-  $('count').textContent = rows.length ? '(' + rows.length + ')' : '';
+  $('count').textContent = rows.length;
 
   var box = $('list');
   box.innerHTML = '';
 
   if (!rows.length) {
     box.innerHTML =
-      '<div class="empty">아직 추가한 종목이 없습니다.<br />위에서 검색해 추가해보세요.</div>';
+      '<div class="empty">아직 추가한 종목이 없습니다.<br />오른쪽 위 <b>+ 종목 추가</b> 로 시작하세요.</div>';
     return;
   }
 
-  var table = document.createElement('table');
-  table.appendChild(
-    headerRow(['', '종목명', '현재가', '전일대비', '등락률', '통화', '장상태', '기준시각', ''])
-  );
+  var grid = document.createElement('div');
+  grid.className = 'grid';
   rows.forEach(function (r, i) {
-    table.appendChild(stockRow(r, i, rows.length));
+    grid.appendChild(stockCard(r, i, rows.length));
   });
-
-  var wrap = document.createElement('div');
-  wrap.className = 'table-wrap';
-  wrap.appendChild(table);
-  box.appendChild(wrap);
+  box.appendChild(grid);
 }
 
-function headerRow(labels) {
-  var tr = document.createElement('tr');
-  labels.forEach(function (label) {
-    var th = document.createElement('th');
-    th.textContent = label;
-    tr.appendChild(th);
-  });
-  return tr;
-}
-
-function stockRow(r, index, total) {
+function stockCard(r, index, total) {
   var chg = r['전일대비'];
+  var rate = r['등락률(%)'];
   var isNum = typeof chg === 'number';
-  var cls = isNum && chg !== 0 ? (chg > 0 ? 'up' : 'down') : '';
-  var sign = isNum && chg > 0 ? '+' : '';
+  var dir = !isNum || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
 
-  var tr = document.createElement('tr');
+  var card = el('div', 'card');
 
-  // 순서 이동 — 양 끝에서는 해당 방향 버튼을 비활성화한다.
-  var moveTd = document.createElement('td');
-  moveTd.className = 'move';
-  moveTd.appendChild(moveButton('▲', r, -1, index === 0));
-  moveTd.appendChild(moveButton('▼', r, 1, index === total - 1));
-  tr.appendChild(moveTd);
+  // 순서 이동 / 삭제 — 평소엔 숨었다가 hover 시 나타난다.
+  var tools = el('div', 'card-tools');
+  tools.appendChild(toolButton('↑', '위로', index === 0, function () {
+    move(r['reutersCode'], -1);
+  }));
+  tools.appendChild(toolButton('↓', '아래로', index === total - 1, function () {
+    move(r['reutersCode'], 1);
+  }));
+  var del = toolButton('×', '삭제', false, function () {
+    remove(r['reutersCode'], r['종목명']);
+  });
+  del.classList.add('del');
+  tools.appendChild(del);
+  card.appendChild(tools);
 
-  var nameTd = document.createElement('td');
-  var name = document.createElement('div');
-  name.className = 'name';
-  name.textContent = r['종목명'];
-  var meta = document.createElement('div');
-  meta.className = 'meta';
-  meta.textContent = r['코드'] + ' · ' + r['시장'];
-  nameTd.appendChild(name);
-  nameTd.appendChild(meta);
-  tr.appendChild(nameTd);
+  // 종목명 + 코드
+  var top = el('div', 'card-top');
+  top.appendChild(el('div', 'card-name', r['종목명']));
+  top.appendChild(el('div', 'card-code', r['코드']));
+  card.appendChild(top);
 
-  tr.appendChild(cell(num(r['현재가'])));
-  tr.appendChild(cell(isNum ? sign + num(chg) : '-', cls));
-  tr.appendChild(
-    cell(typeof r['등락률(%)'] === 'number' ? sign + r['등락률(%)'].toFixed(2) + '%' : '-', cls)
-  );
-  tr.appendChild(cell(r['통화']));
-  tr.appendChild(cell(r['장상태']));
-  tr.appendChild(cell(r['기준시각'], 'meta'));
+  // 현재가 — 통화에 따라 소수 자릿수를 다르게 본다.
+  var decimals = r['통화'] === 'KRW' ? 0 : 2;
+  card.appendChild(el('div', 'card-price', num(r['현재가'], decimals)));
 
-  var btnTd = document.createElement('td');
-  var btn = document.createElement('button');
-  btn.className = 'danger';
-  btn.textContent = '삭제';
-  btn.onclick = function () {
-    del(r['reutersCode'], r['종목명']);
-  };
-  btnTd.appendChild(btn);
-  tr.appendChild(btnTd);
+  // 전일대비 + 등락률
+  var change = el('div', 'card-change ' + dir);
+  if (isNum) {
+    change.appendChild(el('span', 'arrow', dir === 'up' ? '▲' : dir === 'down' ? '▼' : '—'));
+    change.appendChild(
+      el('span', '', (chg > 0 ? '+' : '') + num(chg, decimals))
+    );
+  }
+  if (typeof rate === 'number') {
+    change.appendChild(el('span', '', (rate > 0 ? '+' : '') + rate.toFixed(2) + '%'));
+  }
+  if (!change.childNodes.length) change.appendChild(el('span', '', '-'));
+  card.appendChild(change);
 
-  return tr;
+  // 시장 · 통화 · 장상태 · 기준시각 — 시안에 없지만 정보는 다 살린다.
+  var meta = el('div', 'card-meta');
+  var status = String(r['장상태'] || '');
+  var badge = el('span', 'badge' + (status === '장중' ? ' open' : ''), status || '-');
+  meta.appendChild(badge);
+  [r['시장'], r['통화'], timePart(r['기준시각'])].forEach(function (v) {
+    if (!v) return;
+    meta.appendChild(el('span', 'sep', '·'));
+    meta.appendChild(el('span', '', String(v)));
+  });
+  card.appendChild(meta);
+
+  return card;
 }
 
-function moveButton(label, row, offset, disabled) {
-  var btn = document.createElement('button');
-  btn.className = 'move-btn';
-  btn.textContent = label;
-  btn.disabled = disabled;
-  btn.title = offset < 0 ? '위로' : '아래로';
-  btn.onclick = function () {
-    move(row['reutersCode'], offset);
-  };
-  return btn;
+function toolButton(label, title, disabled, onClick) {
+  var b = el('button', 'tool', label);
+  b.title = title;
+  b.disabled = disabled;
+  b.onclick = onClick;
+  return b;
 }
 
-function move(code, offset) {
-  setBusy(true);
-  msg('순서 변경 중…');
+function el(tag, className, text) {
+  var node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
 
-  callApi({ action: 'move', code: code, offset: offset })
-    .then(function (res) {
-      notice(res.moved ? '순서를 바꿨습니다' : '');
-      return load();
+/* ------------------------------------------------------------------ 모달 */
+
+function openModal() {
+  $('modal').hidden = false;
+  renderChips();
+  $('query').value = '';
+  $('query').focus();
+  renderResults([]);
+  $('results').innerHTML =
+    '<div class="empty sm">종목명이나 티커를 입력하세요.<br />국내·해외 모두 찾을 수 있습니다.</div>';
+}
+
+function closeModal() {
+  $('modal').hidden = true;
+  found = [];
+}
+
+/** 최근 추가한 종목을 칩으로 보여준다. 자주 쓰는 것을 빨리 다시 찾게. */
+function getRecent() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+  } catch (e) {
+    return [];
+  }
+}
+
+function pushRecent(name) {
+  try {
+    var list = getRecent().filter(function (n) {
+      return n !== name;
+    });
+    list.unshift(name);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 4)));
+  } catch (e) {
+    // 저장 실패는 무시 — 편의 기능일 뿐이다.
+  }
+}
+
+function renderChips() {
+  var box = $('chips');
+  box.innerHTML = '';
+
+  getRecent().forEach(function (name) {
+    var chip = el('button', 'chip', '최근 · ' + name);
+    chip.onclick = function () {
+      $('query').value = name;
+      search();
+    };
+    box.appendChild(chip);
+  });
+}
+
+/* ------------------------------------------------------------------ 검색 */
+
+var searchTimer = null;
+
+function scheduleSearch() {
+  clearTimeout(searchTimer);
+  // 타이핑마다 부르면 GAS 왕복이 2초라 감당이 안 된다.
+  searchTimer = setTimeout(search, 350);
+}
+
+function search() {
+  clearTimeout(searchTimer);
+  var q = $('query').value.trim();
+  if (!q) {
+    renderResults([]);
+    return;
+  }
+
+  $('ring').classList.add('busy');
+
+  callApi({ action: 'search', query: q })
+    .then(function (items) {
+      $('ring').classList.remove('busy');
+      renderResults(items || []);
     })
-    .catch(fail);
+    .catch(function (err) {
+      $('ring').classList.remove('busy');
+      $('results').innerHTML = '';
+      fail(err);
+    });
 }
 
-function cell(text, cls) {
-  var td = document.createElement('td');
-  td.textContent = text === null || text === undefined || text === '' ? '-' : text;
-  if (cls) td.className = cls;
-  return td;
+function renderResults(items) {
+  found = items || [];
+  $('resultCount').textContent = found.length;
+
+  var box = $('results');
+  box.innerHTML = '';
+
+  if (!found.length) {
+    if ($('query').value.trim()) {
+      box.innerHTML = '<div class="empty sm">검색 결과가 없습니다.</div>';
+    }
+    return;
+  }
+
+  found.forEach(function (s, i) {
+    var row = el('div', 'row');
+
+    var main = el('div', 'row-main');
+    main.appendChild(el('div', 'row-name', s.name));
+    main.appendChild(el('div', 'row-sub', s.code + '  ' + s.market + '  ' + s.nation));
+    row.appendChild(main);
+
+    var btn = el('button', 'row-add', '+');
+    btn.title = '추가';
+    btn.onclick = function () {
+      add(i, btn);
+    };
+    row.appendChild(btn);
+
+    box.appendChild(row);
+  });
 }
 
-/* ------------------------------------------------------- 새로고침 / 삭제 */
+function add(i, btn) {
+  var s = found[i];
+  if (!s) return;
+
+  btn.disabled = true;
+
+  callApi({ action: 'add', items: JSON.stringify([s]) })
+    .then(function (res) {
+      // 모달을 닫지 않는다. 여러 종목을 연달아 담을 수 있어야 편하다.
+      btn.textContent = '✓';
+      btn.classList.add('done');
+      notice(res.added ? s.name + ' 추가됨' : s.name + ' 은(는) 이미 있습니다');
+      pushRecent(s.name);
+      return load(true);
+    })
+    .catch(function (err) {
+      btn.disabled = false;
+      fail(err);
+    });
+}
+
+/* ------------------------------------------------------- 새로고침 / 편집 */
 
 function refresh() {
   setBusy(true);
-  msg('시세 갱신 중…');
+  notice('시세 갱신 중…');
 
   callApi({ action: 'refresh' })
     .then(function (res) {
@@ -402,11 +460,20 @@ function refresh() {
     .catch(fail);
 }
 
-function del(code, name) {
+function move(code, offset) {
+  setBusy(true);
+  callApi({ action: 'move', code: code, offset: offset })
+    .then(function () {
+      return load(true);
+    })
+    .catch(fail);
+}
+
+function remove(code, name) {
   if (!confirm(name + ' 을(를) 삭제할까요?')) return;
 
   setBusy(true);
-  msg('삭제 중…');
+  notice('삭제 중…');
 
   callApi({ action: 'delete', codes: JSON.stringify([code]) })
     .then(function (res) {
@@ -418,10 +485,18 @@ function del(code, name) {
 
 /* ------------------------------------------------------------------ 시작 */
 
-$('searchBtn').onclick = search;
 $('refreshBtn').onclick = refresh;
-$('query').addEventListener('keydown', function (e) {
+$('addBtn').onclick = openModal;
+$('closeBtn').onclick = closeModal;
+$('backdrop').onclick = closeModal;
+$('query').oninput = scheduleSearch;
+
+$('query').onkeydown = function (e) {
   if (e.key === 'Enter') search();
+};
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && !$('modal').hidden) closeModal();
 });
 
 $('autoChk').onchange = function () {
@@ -431,7 +506,7 @@ $('autoChk').onchange = function () {
 
   callApi({ action: 'trigger', on: on ? '1' : '0' })
     .then(function () {
-      notice(on ? '자동 갱신 켜짐 (1분 주기)' : '자동 갱신 꺼짐');
+      notice(on ? '자동 갱신 켜짐' : '자동 갱신 꺼짐');
       return load(true);
     })
     .catch(function (err) {

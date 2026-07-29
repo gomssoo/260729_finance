@@ -10,35 +10,69 @@
   </head>
 
   <body>
-    <header>
-      <h1><span>NPay증권</span> 포트폴리오</h1>
-    </header>
+    <div class="wrap">
+      <header class="bar">
+        <div class="title">
+          <h1>관심 종목</h1>
+          <span class="label">WATCHLIST</span>
+          <span class="dot">·</span>
+          <span class="label" id="count">0</span>
+        </div>
 
-    <div class="bar">
-      <input id="query" type="text" placeholder="종목명 또는 티커 (예: 삼성전자, AAPL)" />
-      <button id="searchBtn">검색</button>
+        <div class="actions">
+          <span class="live" id="live" hidden>
+            <i class="pulse"></i>
+            <span id="liveTime"></span>
+          </span>
+          <label class="auto" title="서버가 주기적으로 시세를 갱신합니다">
+            <input type="checkbox" id="autoChk" />
+            <span id="autoLabel">자동 갱신</span>
+          </label>
+          <button class="ghost" id="refreshBtn">시세 새로고침</button>
+          <button id="addBtn">+ 종목 추가</button>
+        </div>
+      </header>
+
+      <div id="msg"></div>
+      <div id="list"><div class="empty">불러오는 중…</div></div>
+
+      <footer>
+        데이터 출처
+        <a href="https://stock.naver.com/" target="_blank" rel="noopener">NPay증권</a>
+      </footer>
     </div>
 
-    <div id="results"></div>
+    <!-- 종목 추가 모달 -->
+    <div class="modal" id="modal" hidden>
+      <div class="backdrop" id="backdrop"></div>
 
-    <div class="head">
-      <h2>관심 종목 <span id="count" class="sub"></span></h2>
-      <div class="actions">
-        <label class="auto" title="서버가 1분마다 시세를 갱신합니다">
-          <input type="checkbox" id="autoChk" />
-          <span id="autoLabel">자동 갱신</span>
-        </label>
-        <button class="ghost" id="refreshBtn">시세 새로고침</button>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <h2 class="sr-only" id="modalTitle">종목 추가</h2>
+
+        <div class="search">
+          <span class="ring" id="ring"></span>
+          <input
+            id="query"
+            type="text"
+            placeholder="종목명 또는 티커 (예: 삼성전자, AAPL)"
+            autocomplete="off"
+          />
+          <button class="close" id="closeBtn" aria-label="닫기">&times;</button>
+        </div>
+
+        <div class="chips" id="chips"></div>
+
+        <div class="results-head">
+          <span class="label">RESULTS</span>
+          <span class="dot">·</span>
+          <span class="label" id="resultCount">0</span>
+        </div>
+
+        <div id="results">
+          <div class="empty sm">종목명이나 티커를 입력하세요.<br />국내·해외 모두 찾을 수 있습니다.</div>
+        </div>
       </div>
     </div>
-
-    <div id="msg"></div>
-    <div id="list"><div class="empty">불러오는 중…</div></div>
-
-    <footer>
-      데이터 출처
-      <a href="https://stock.naver.com/" target="_blank" rel="noopener">NPay증권</a>
-    </footer>
 
     <script src="config.js"></script>
     <script src="app.js"></script>

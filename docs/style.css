@@ -564,12 +564,10 @@ button:disabled {
   filter: brightness(0.38) contrast(2.4) grayscale(1);
 }
 
+/* 장마감 카드는 전체를 흐리게 하지만 차트만은 예외로 둔다.
+   opacity 를 겹쳐 씌우면 애써 넣은 색이 도로 흐려진다. */
 .card.closed .card-chart img {
-  opacity: 0.45;
-}
-
-.card.closed:hover .card-chart img {
-  opacity: 0.9;
+  opacity: 0.82;
 }
 
 .index-chart {
@@ -583,7 +581,15 @@ button:disabled {
   height: 30px;
   object-fit: fill;
   display: block;
-  filter: brightness(0.55) contrast(1.7);
+  filter: brightness(0.5) contrast(2.2) grayscale(1);
+}
+
+.index-chart.up img {
+  filter: brightness(0.42) contrast(2.4) sepia(1) saturate(9) hue-rotate(310deg);
+}
+
+.index-chart.down img {
+  filter: brightness(0.45) contrast(2.4) sepia(1) saturate(8) hue-rotate(178deg);
 }
 
 /* 다크모드에선 어둡게 누르는 대신 밝게 띄워야 배경에서 살아난다. */
@@ -600,7 +606,13 @@ button:disabled {
     filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(8) hue-rotate(155deg);
   }
   :root:not([data-theme='light']) .index-chart img {
-    filter: invert(1) brightness(1.5) contrast(1.8);
+    filter: invert(1) brightness(1.5) contrast(1.9) grayscale(1);
+  }
+  :root:not([data-theme='light']) .index-chart.up img {
+    filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(9) hue-rotate(320deg);
+  }
+  :root:not([data-theme='light']) .index-chart.down img {
+    filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(8) hue-rotate(155deg);
   }
 }
 
@@ -617,7 +629,15 @@ button:disabled {
 }
 
 :root[data-theme='dark'] .index-chart img {
-  filter: invert(1) brightness(1.5) contrast(1.8);
+  filter: invert(1) brightness(1.5) contrast(1.9) grayscale(1);
+}
+
+:root[data-theme='dark'] .index-chart.up img {
+  filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(9) hue-rotate(320deg);
+}
+
+:root[data-theme='dark'] .index-chart.down img {
+  filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(8) hue-rotate(155deg);
 }
 
 /* 추세 배지 안의 변동폭 */

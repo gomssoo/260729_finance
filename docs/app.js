@@ -296,7 +296,7 @@ function renderIndices(list) {
     item.appendChild(line);
 
     if (ix.chart) {
-      var ic = el('div', 'index-chart');
+      var ic = el('div', 'index-chart ' + dir);
       var iimg = document.createElement('img');
       iimg.src = ix.chart;
       iimg.alt = '';

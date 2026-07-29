@@ -16,11 +16,21 @@ const root = path.join(__dirname, '..');
 const configPath = path.join(root, 'docs', 'config.js');
 const description = process.argv[2] || 'update';
 
+// Windows 에서는 shell 을 거치는데, 그러면 공백이 든 인자가 쪼개진다.
+// ('스파크라인 추가' → '스파크라인' + '추가' 로 분해되어 인자 수가 안 맞는다.)
+// 셸에 넘길 때만 따옴표로 감싼다.
 function run(args) {
-  return execFileSync('npx', args, {
+  const useShell = process.platform === 'win32';
+  const finalArgs = useShell
+    ? args.map(function (a) {
+        return /\s/.test(a) ? '"' + a.replace(/"/g, '\\"') + '"' : a;
+      })
+    : args;
+
+  return execFileSync('npx', finalArgs, {
     cwd: root,
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: useShell,
   });
 }
 
@@ -28,7 +38,9 @@ console.log('· 코드 업로드');
 process.stdout.write(run(['clasp', 'push', '--force']));
 
 console.log('· 새 배포 생성');
-const out = run(['clasp', 'create-deployment', '--description', description]);
+// clasp 3.x 의 create-deployment 는 위치 인자를 받지 않는다.
+// 설명은 -d 플래그로만 넘길 수 있다.
+const out = run(['clasp', 'create-deployment', '-d', description]);
 process.stdout.write(out);
 
 // "Deployed AKfycb... @13" 에서 배포 ID 만 뽑는다.

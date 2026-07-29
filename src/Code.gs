@@ -422,6 +422,30 @@ function refreshPrices() {
   return { updated: codes.length - failed, failed: failed };
 }
 
+/* ------------------------------------------------------------------ 차트 */
+
+var CHART_BASE = 'https://ssl.pstatic.net/imgfinance/chart/';
+
+/**
+ * 150x64 투명 배경 미니 차트(스파크라인) URL.
+ *
+ * 경로 규칙이 일정해서 시트에 저장하지 않고 코드로 만든다.
+ *   국내  mobile/mini/005930_transparent.png
+ *   해외  mobile/world/item/day/KORU.K_transparent.png
+ *
+ * 뒤에 붙는 stamp 는 캐시를 깨기 위한 것이다. 이게 없으면 브라우저가
+ * 옛 차트를 계속 쓴다.
+ */
+function chartUrl(reutersCode, nationCode, stamp) {
+  if (!reutersCode) return '';
+
+  var path = isDomestic(reutersCode, nationCode)
+    ? 'mobile/mini/' + reutersCode
+    : 'mobile/world/item/day/' + reutersCode;
+
+  return CHART_BASE + path + '_transparent.png?' + (stamp || '');
+}
+
 /* ------------------------------------------------------------------ 지수 */
 
 // 화면 맨 위에 띄우는 주요 지수. 시트에 저장하지 않고 그때그때 조회한다.
@@ -452,6 +476,10 @@ function getIndices() {
     }
     if (!data || !data.closePrice) return { label: meta.label, ok: false };
 
+    // 지수는 코스피/선물/해외지수가 서로 다른 경로를 써서
+    // 규칙으로 만들지 않고 응답에 담겨 온 URL 을 그대로 쓴다.
+    var chart = (data.imageCharts || {}).transparent || '';
+
     return {
       label: meta.label,
       ok: true,
@@ -460,6 +488,7 @@ function getIndices() {
       rate: toNumber(data.fluctuationsRatio),
       status: marketStatusLabel(data.marketStatus),
       tradedAt: data.localTradedAt ? formatLocalTradedAt(data.localTradedAt) : '',
+      chart: chart,
     };
   });
 }
@@ -527,11 +556,16 @@ function updateTrends(sheet, values, tradedAts) {
     }
 
     nextHistories.push([history.join(',')]);
-    trends.push([trendOf(history)]);
+
+    // '상향 +1.23' 형태로 담는다. 화면에서 쪼개 쓰고, 시트에서도 바로 읽힌다.
+    var t = trendDetail(history);
+    trends.push([
+      t.label === '-' ? '-' : t.label + ' ' + (t.total > 0 ? '+' : '') + t.total.toFixed(2),
+    ]);
   }
 
   histRange.setNumberFormat('@').setValues(nextHistories);
-  sheet.getRange(2, COL['추세'], count, 1).setValues(trends);
+  sheet.getRange(2, COL['추세'], count, 1).setNumberFormat('@').setValues(trends);
 }
 
 function parseHistory(raw) {
@@ -552,7 +586,18 @@ function parseHistory(raw) {
  * 같은 잣대로 보기 위해서다. 값이 모자라면 '-' 를 돌려 판정을 미룬다.
  */
 function trendOf(history) {
-  if (!history || history.length < 3) return '-';
+  var t = trendDetail(history);
+  return t.label;
+}
+
+/**
+ * 방향과 함께 실제 변동폭도 돌려준다.
+ *
+ * total 은 이력 처음부터 끝까지의 누적 변동률이다. 배지에 '상향' 만
+ * 띄우면 0.1% 오른 것과 5% 오른 것이 똑같아 보여서 함께 표시한다.
+ */
+function trendDetail(history) {
+  if (!history || history.length < 3) return { label: '-', avg: 0, total: 0 };
 
   var deltas = [];
   for (var i = 1; i < history.length; i++) {
@@ -560,16 +605,19 @@ function trendOf(history) {
     if (!prev) continue;
     deltas.push(((history[i] - prev) / prev) * 100);
   }
-  if (!deltas.length) return '-';
+  if (!deltas.length) return { label: '-', avg: 0, total: 0 };
 
   var sum = deltas.reduce(function (a, b) {
     return a + b;
   }, 0);
   var avg = sum / deltas.length;
 
-  if (avg > TREND_THRESHOLD) return '상향';
-  if (avg < -TREND_THRESHOLD) return '하향';
-  return '횡보';
+  var first = history[0];
+  var last = history[history.length - 1];
+  var total = first ? ((last - first) / first) * 100 : 0;
+
+  var label = avg > TREND_THRESHOLD ? '상향' : avg < -TREND_THRESHOLD ? '하향' : '횡보';
+  return { label: label, avg: avg, total: total };
 }
 
 /**
@@ -1012,6 +1060,13 @@ function listStocks() {
       // 이력 원본은 화면에서 쓰지 않는다. 개수만 넘겨 판정 신뢰도를 표시한다.
       o['이력수'] = parseHistory(o['이력']).length;
       delete o['이력'];
+
+      // 스파크라인. 기준시각을 스탬프로 써서 시세가 바뀔 때만 새로 받는다.
+      o['차트'] = chartUrl(
+        o['reutersCode'],
+        o['nationCode'],
+        String(o['기준시각'] || '').replace(/\D/g, '')
+      );
       return o;
     });
 }

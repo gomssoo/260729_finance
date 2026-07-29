@@ -295,6 +295,19 @@ function renderIndices(list) {
     line.appendChild(chg);
     item.appendChild(line);
 
+    if (ix.chart) {
+      var ic = el('div', 'index-chart');
+      var iimg = document.createElement('img');
+      iimg.src = ix.chart;
+      iimg.alt = '';
+      iimg.loading = 'lazy';
+      iimg.onerror = function () {
+        ic.remove();
+      };
+      ic.appendChild(iimg);
+      item.appendChild(ic);
+    }
+
     if (ix.status !== '장중') item.classList.add('closed');
     item.title = ix.status + ' · ' + ix.tradedAt + ' 기준';
 
@@ -377,6 +390,21 @@ function stockCard(r, index, total) {
   card.title =
     (card.title ? card.title + '\n' : '') + status + ' · ' + r['시장'] + ' · ' + r['통화'];
 
+  // 스파크라인 — 네이버가 주는 150x64 투명 PNG 를 그대로 쓴다.
+  if (r['차트']) {
+    var chart = el('div', 'card-chart');
+    var img = document.createElement('img');
+    img.src = r['차트'];
+    img.alt = '';
+    img.loading = 'lazy';
+    // 이미지가 없거나 막히면 영역째 지워 빈 칸이 남지 않게 한다.
+    img.onerror = function () {
+      chart.remove();
+    };
+    chart.appendChild(img);
+    card.appendChild(chart);
+  }
+
   // 시간외(NXT) 거래가 있으면 정규장 아래에 덧붙인다.
   if (typeof r['시간외'] === 'number' && r['시간외'] > 0) {
     var oChg = r['시간외대비'];
@@ -400,12 +428,20 @@ function stockCard(r, index, total) {
   var meta = el('div', 'card-meta');
   meta.appendChild(el('span', '', timePart(r['기준시각'])));
 
-  var trend = String(r['추세'] || '');
+  // '상향 +1.23' 형태로 저장돼 있다. 방향과 폭을 나눠 보여준다.
+  var trend = String(r['추세'] || '').trim();
   if (trend && trend !== '-') {
-    var cls = trend === '상향' ? 'up' : trend === '하향' ? 'down' : 'flat';
-    var tag = el('span', 'trend ' + cls, trend);
+    var parts = trend.split(/\s+/);
+    var label = parts[0];
+    var pct = parts[1];
+
+    var cls = label === '상향' ? 'up' : label === '하향' ? 'down' : 'flat';
+    var tag = el('span', 'trend ' + cls);
+    tag.appendChild(el('span', '', label));
+    if (pct) tag.appendChild(el('span', 'trend-pct', pct + '%'));
+
     // 값이 적으면 판정이 흔들린다. 몇 개로 본 것인지 알려준다.
-    tag.title = '최근 ' + (r['이력수'] || 0) + '개 시세 기준';
+    tag.title = '최근 ' + (r['이력수'] || 0) + '개 시세 기준 누적 변동';
     meta.appendChild(tag);
   }
   card.appendChild(meta);

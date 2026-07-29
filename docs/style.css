@@ -506,6 +506,65 @@ button:disabled {
   line-height: 1;
 }
 
+/* 스파크라인 — 네이버가 주는 150x64 투명 PNG */
+.card-chart {
+  margin: 2px 0 10px;
+  height: 40px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.card-chart img {
+  width: 100%;
+  height: 40px;
+  object-fit: fill;
+  display: block;
+  /* 밝은 배경에 맞춰 그려진 이미지라 다크모드에선 대비를 올린다. */
+  opacity: 0.9;
+}
+
+.card.closed .card-chart img {
+  opacity: 0.45;
+}
+
+.card.closed:hover .card-chart img {
+  opacity: 0.9;
+}
+
+.index-chart {
+  margin-top: 6px;
+  height: 28px;
+  overflow: hidden;
+}
+
+.index-chart img {
+  width: 100%;
+  height: 28px;
+  object-fit: fill;
+  display: block;
+  opacity: 0.85;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .card-chart img,
+  :root:not([data-theme='light']) .index-chart img {
+    filter: brightness(1.35) saturate(1.15);
+  }
+}
+
+:root[data-theme='dark'] .card-chart img,
+:root[data-theme='dark'] .index-chart img {
+  filter: brightness(1.35) saturate(1.15);
+}
+
+/* 추세 배지 안의 변동폭 */
+.trend-pct {
+  margin-left: 4px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 시간외(NXT) — 정규장 마감 뒤 20시까지 거래된 값 */
 .card-over {
   display: flex;

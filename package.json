@@ -6,7 +6,7 @@
   "scripts": {
     "push": "clasp push --force",
     "pull": "clasp pull",
-    "deploy": "clasp push --force && clasp create-deployment",
+    "deploy": "node scripts/deploy.js",
     "open": "clasp open-script",
     "logs": "clasp tail-logs",
     "status": "clasp show-file-status",

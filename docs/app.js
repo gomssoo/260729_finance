@@ -321,17 +321,14 @@ function stockCard(r, index, total) {
   if (!change.childNodes.length) change.appendChild(el('span', '', '-'));
   card.appendChild(change);
 
-  // 시장 · 통화 · 장상태 · 기준시각 — 시안에 없지만 정보는 다 살린다.
-  var meta = el('div', 'card-meta');
+  // 장마감은 배지 대신 카드 전체를 흐리게 해서 한눈에 구분한다.
   var status = String(r['장상태'] || '');
-  var badge = el('span', 'badge' + (status === '장중' ? ' open' : ''), status || '-');
-  meta.appendChild(badge);
-  [r['시장'], r['통화'], timePart(r['기준시각'])].forEach(function (v) {
-    if (!v) return;
-    meta.appendChild(el('span', 'sep', '·'));
-    meta.appendChild(el('span', '', String(v)));
-  });
-  card.appendChild(meta);
+  if (status && status !== '장중') card.classList.add('closed');
+  card.title =
+    (card.title ? card.title + '\n' : '') + status + ' · ' + r['시장'] + ' · ' + r['통화'];
+
+  // 기준시각만 남긴다. 시장명과 통화는 국가 그룹으로 이미 드러난다.
+  card.appendChild(el('div', 'card-meta', timePart(r['기준시각'])));
 
   return card;
 }

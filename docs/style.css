@@ -387,32 +387,41 @@ button:disabled {
 }
 
 .card-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   font-size: 10.5px;
   color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
   border-top: 1px solid var(--line);
   padding-top: 9px;
 }
 
-.card-meta .sep {
-  opacity: 0.5;
+/* 장마감 종목은 옅게 — 지금 거래되는 종목과 한눈에 구분된다. */
+.card.closed {
+  background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  box-shadow: none;
 }
 
-.badge {
-  padding: 1.5px 6px;
-  border-radius: 4px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+.card.closed .card-price,
+.card.closed .card-name {
+  color: var(--muted);
 }
 
-.badge.open {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+.card.closed .card-change {
+  opacity: 0.62;
+}
+
+.card.closed:hover {
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.card.closed:hover .card-price,
+.card.closed:hover .card-name {
+  color: var(--fg);
+}
+
+.card.closed:hover .card-change {
+  opacity: 1;
 }
 
 .card-tools {

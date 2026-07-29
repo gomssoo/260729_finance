@@ -391,12 +391,23 @@ function stockCard(r, index, total) {
     (card.title ? card.title + '\n' : '') + status + ' · ' + r['시장'] + ' · ' + r['통화'];
 
   // 스파크라인 — 네이버가 주는 150x64 투명 PNG 를 그대로 쓴다.
+  // 이미지 안에 가격 데이터가 없어 호버 툴팁은 만들 수 없다.
+  // 대신 누르면 네이버 해당 종목 페이지로 보낸다.
   if (r['차트']) {
-    var chart = el('div', 'card-chart');
+    var chart = el('a', 'card-chart ' + dir);
+    chart.href = naverUrl(r);
+    chart.target = '_blank';
+    chart.rel = 'noopener';
+    chart.title = r['종목명'] + ' — 네이버에서 자세히 보기';
+
+    // 링크는 기본적으로 드래그가 걸려서, 카드 순서 이동을 방해한다.
+    chart.draggable = false;
+
     var img = document.createElement('img');
     img.src = r['차트'];
     img.alt = '';
     img.loading = 'lazy';
+    img.draggable = false;
     // 이미지가 없거나 막히면 영역째 지워 빈 칸이 남지 않게 한다.
     img.onerror = function () {
       chart.remove();
@@ -551,6 +562,14 @@ function commitOrder() {
       return load(true);
     })
     .catch(fail);
+}
+
+/** 네이버 증권의 해당 종목 페이지. 국내와 해외가 경로가 다르다. */
+function naverUrl(r) {
+  var base = 'https://m.stock.naver.com/';
+  return r['nationCode'] === 'KOR'
+    ? base + 'domestic/stock/' + r['reutersCode'] + '/total'
+    : base + 'worldstock/stock/' + r['reutersCode'] + '/total';
 }
 
 function toolButton(label, title, disabled, onClick) {

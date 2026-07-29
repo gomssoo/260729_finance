@@ -509,11 +509,14 @@ button:disabled {
 /* 스파크라인 — 네이버가 주는 150x64 투명 PNG */
 /* 원본 150x64 비율(2.34:1)을 지킨다. object-fit: fill 로 눌러 담으면
    전일 종가 점선과 시세선이 세로로 찌그러져 어색해진다. */
+/* 스파크라인은 원본 비율을 지킬 이유가 없다. aspect-ratio 를 쓰면
+   카드가 넓어질수록 세로도 같이 커져(317px 폭 → 135px 높이) 카드를
+   집어삼킨다. 가로로 꽉 채우고 높이만 고정한다. */
 .card-chart {
   position: relative;
   display: block;
   margin: 2px 0 10px;
-  aspect-ratio: 150 / 64;
+  height: 44px;
   overflow: hidden;
   border-radius: 4px;
   transition: background 0.15s;
@@ -526,39 +529,39 @@ button:disabled {
 .card-chart img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  /* fill 로 늘려야 가로를 꽉 채운다. contain 은 원본 비율을 지키느라
+     좁은 폭으로 쪼그라들어 왼쪽에 몰린다. */
+  object-fit: fill;
   display: block;
 }
 
 /* 원본은 옅은 회색이라 잘 안 보인다. 이미지를 직접 손댈 수는 없으니
    필터로 색을 입힌다. 회색을 어둡게 눌러(brightness+contrast) 실루엣을
    만든 뒤, sepia 로 색을 채우고 hue-rotate 로 원하는 색조로 돌린다. */
+/* 기본(보합·방향 미상)을 먼저 두고, 방향 클래스가 덮어쓰게 한다.
+   순서가 뒤집히면 .card-chart img 가 항상 이겨 색이 안 먹는다. */
 .card-chart img {
-  filter: brightness(0.55) contrast(1.6) sepia(1) saturate(6) hue-rotate(315deg);
+  filter: brightness(0.5) contrast(2.2) grayscale(1);
 }
 
 .card-chart.up img {
-  filter: brightness(0.6) contrast(1.6) sepia(1) saturate(7) hue-rotate(315deg);
+  filter: brightness(0.42) contrast(2.4) sepia(1) saturate(9) hue-rotate(310deg);
 }
 
 .card-chart.down img {
-  filter: brightness(0.6) contrast(1.6) sepia(1) saturate(6) hue-rotate(175deg);
+  filter: brightness(0.45) contrast(2.4) sepia(1) saturate(8) hue-rotate(178deg);
 }
 
-.card-chart.flat img {
-  filter: brightness(0.7) contrast(1.4) grayscale(1);
-}
-
-.card-chart:hover img {
-  filter: brightness(0.45) contrast(1.8) sepia(1) saturate(8) hue-rotate(315deg);
+.card-chart.up:hover img {
+  filter: brightness(0.32) contrast(2.6) sepia(1) saturate(10) hue-rotate(310deg);
 }
 
 .card-chart.down:hover img {
-  filter: brightness(0.5) contrast(1.8) sepia(1) saturate(7) hue-rotate(175deg);
+  filter: brightness(0.35) contrast(2.6) sepia(1) saturate(9) hue-rotate(178deg);
 }
 
 .card-chart.flat:hover img {
-  filter: brightness(0.55) contrast(1.5) grayscale(1);
+  filter: brightness(0.38) contrast(2.4) grayscale(1);
 }
 
 .card.closed .card-chart img {
@@ -578,48 +581,43 @@ button:disabled {
 .index-chart img {
   width: 100%;
   height: 30px;
-  object-fit: contain;
-  object-position: center;
+  object-fit: fill;
   display: block;
-  filter: brightness(0.6) contrast(1.5);
+  filter: brightness(0.55) contrast(1.7);
 }
 
 /* 다크모드에선 어둡게 누르는 대신 밝게 띄워야 배경에서 살아난다. */
+/* 다크모드에선 어둡게 누르는 대신 밝게 띄워야 배경에서 살아난다.
+   invert 로 선을 밝게 뒤집은 뒤 색을 입힌다. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .card-chart img,
-  :root:not([data-theme='light']) .card-chart.up img,
-  :root:not([data-theme='light']) .card-chart:hover img {
-    filter: brightness(1.6) contrast(1.5) sepia(1) saturate(7) hue-rotate(320deg);
+  :root:not([data-theme='light']) .card-chart img {
+    filter: invert(1) brightness(1.5) contrast(1.9) grayscale(1);
   }
-  :root:not([data-theme='light']) .card-chart.down img,
-  :root:not([data-theme='light']) .card-chart.down:hover img {
-    filter: brightness(1.5) contrast(1.5) sepia(1) saturate(6) hue-rotate(180deg);
+  :root:not([data-theme='light']) .card-chart.up img {
+    filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(9) hue-rotate(320deg);
   }
-  :root:not([data-theme='light']) .card-chart.flat img {
-    filter: brightness(1.8) contrast(1.3) grayscale(1);
+  :root:not([data-theme='light']) .card-chart.down img {
+    filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(8) hue-rotate(155deg);
   }
   :root:not([data-theme='light']) .index-chart img {
-    filter: brightness(1.6) contrast(1.4);
+    filter: invert(1) brightness(1.5) contrast(1.8);
   }
 }
 
-:root[data-theme='dark'] .card-chart img,
-:root[data-theme='dark'] .card-chart.up img,
-:root[data-theme='dark'] .card-chart:hover img {
-  filter: brightness(1.6) contrast(1.5) sepia(1) saturate(7) hue-rotate(320deg);
+:root[data-theme='dark'] .card-chart img {
+  filter: invert(1) brightness(1.5) contrast(1.9) grayscale(1);
 }
 
-:root[data-theme='dark'] .card-chart.down img,
-:root[data-theme='dark'] .card-chart.down:hover img {
-  filter: brightness(1.5) contrast(1.5) sepia(1) saturate(6) hue-rotate(180deg);
+:root[data-theme='dark'] .card-chart.up img {
+  filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(9) hue-rotate(320deg);
 }
 
-:root[data-theme='dark'] .card-chart.flat img {
-  filter: brightness(1.8) contrast(1.3) grayscale(1);
+:root[data-theme='dark'] .card-chart.down img {
+  filter: invert(1) brightness(1.1) contrast(2) sepia(1) saturate(8) hue-rotate(155deg);
 }
 
 :root[data-theme='dark'] .index-chart img {
-  filter: brightness(1.6) contrast(1.4);
+  filter: invert(1) brightness(1.5) contrast(1.8);
 }
 
 /* 추세 배지 안의 변동폭 */

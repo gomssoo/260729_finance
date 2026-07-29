@@ -5,4 +5,4 @@
  * 그때는 이 값만 바꿔서 다시 커밋하면 된다.
  */
 window.API_URL =
-  'https://script.google.com/macros/s/AKfycbz6TETFLDV1egtwYxTuRkLTglMogQ9qCTjLA3wCg4oaLqZ_XVsFmhzlc8sE5TsO0Ery/exec';
+  'https://script.google.com/macros/s/AKfycbzRHmlu0MpPPqtUVR_U5GyQefwipnskp2ZycpXWSecwUKYjFf4ptxkbH1VEMQNwkWXe/exec';

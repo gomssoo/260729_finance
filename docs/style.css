@@ -200,8 +200,45 @@ button:disabled {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+  margin-bottom: 22px;
+}
+
+.grid:last-child {
+  margin-bottom: 0;
+}
+
+/* ------------------------------------------------------------ 그룹 머리 */
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 4px 0 10px;
+}
+
+.group-code {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--fg);
+}
+
+.group-name {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.group-count {
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  padding-left: 2px;
+}
+
+.group-count::before {
+  content: '· ';
 }
 
 .card {
@@ -219,33 +256,97 @@ button:disabled {
   transform: translateY(-1px);
 }
 
+.card:active {
+  cursor: grabbing;
+}
+
+.card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/* 놓일 위치를 카드 옆 세로선으로 알린다. */
+.card.drop-before::before,
+.card.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.card.drop-before::before {
+  left: -7px;
+}
+
+.card.drop-after::after {
+  right: -7px;
+}
+
+/* 국가가 달라 놓을 수 없는 카드 */
+.card.drop-deny {
+  border-color: var(--up);
+  box-shadow: 0 0 0 1px var(--up);
+}
+
+.card.drop-deny::after {
+  content: '다른 국가';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--up);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .card-top {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 11px;
+  /* 삭제 버튼과 겹치지 않게 우측을 비워둔다. */
+  padding-right: 22px;
+}
+
+.card-titles {
+  min-width: 0;
+  flex: 1;
+  /* 해외 카드는 부제가 없다. 높이를 맞춰야 3열에서 현재가 줄이 나란해진다. */
+  min-height: 34px;
 }
 
 .card-name {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.3;
   letter-spacing: -0.01em;
-  /* 해외 종목명은 길다. 두 줄까지 보이고 넘치면 자른다. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.card-code {
+/* 해외 종목은 티커를 앞세운다. 이름보다 짧고 알아보기 쉽다. */
+.card-name.ticker {
+  font-family: 'SF Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.card-sub {
   font-size: 10.5px;
   color: var(--faint);
-  letter-spacing: 0.06em;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
   white-space: nowrap;
-  padding-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-price {
@@ -605,15 +706,24 @@ footer a {
   color: var(--muted);
 }
 
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 @media (max-width: 560px) {
   .wrap {
     padding: 20px 14px 40px;
   }
   .grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: 1fr;
   }
   .card-price {
     font-size: 22px;
+  }
+  .card-name {
+    min-height: 0;
   }
   .card-tools {
     opacity: 1;

@@ -207,6 +207,16 @@ function setPollInterval(ms) {
 
 /* ------------------------------------------------------------------ 카드 */
 
+// 국가 코드 → 표시 라벨. 목록에 없는 나라는 코드를 그대로 쓴다.
+var NATION_LABEL = {
+  KOR: { code: 'KR', name: '국내' },
+  USA: { code: 'US', name: '미국' },
+  JPN: { code: 'JP', name: '일본' },
+  HKG: { code: 'HK', name: '홍콩' },
+  CHN: { code: 'CN', name: '중국' },
+  VNM: { code: 'VN', name: '베트남' },
+};
+
 function renderList(rows) {
   $('count').textContent = rows.length;
 
@@ -219,12 +229,39 @@ function renderList(rows) {
     return;
   }
 
-  var grid = document.createElement('div');
-  grid.className = 'grid';
+  // 시트 순서를 유지한 채 국가별로 묶는다.
+  // 순서 이동은 전체 목록 기준이라 원래 인덱스를 함께 넘긴다.
+  var groups = [];
+  var byNation = {};
+
   rows.forEach(function (r, i) {
-    grid.appendChild(stockCard(r, i, rows.length));
+    var key = String(r['nationCode'] || '기타');
+    if (!byNation[key]) {
+      byNation[key] = { key: key, items: [] };
+      groups.push(byNation[key]);
+    }
+    byNation[key].items.push({ row: r, index: i });
   });
-  box.appendChild(grid);
+
+  groups.forEach(function (g) {
+    box.appendChild(groupHeader(g.key, g.items.length));
+
+    var grid = el('div', 'grid');
+    g.items.forEach(function (it) {
+      grid.appendChild(stockCard(it.row, it.index, rows.length));
+    });
+    box.appendChild(grid);
+  });
+}
+
+function groupHeader(nationCode, count) {
+  var info = NATION_LABEL[nationCode] || { code: nationCode, name: '' };
+
+  var head = el('div', 'group-head');
+  head.appendChild(el('span', 'group-code', info.code));
+  if (info.name) head.appendChild(el('span', 'group-name', info.name));
+  head.appendChild(el('span', 'group-count', String(count)));
+  return head;
 }
 
 function stockCard(r, index, total) {
@@ -234,15 +271,15 @@ function stockCard(r, index, total) {
   var dir = !isNum || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
 
   var card = el('div', 'card');
+  card.draggable = true;
+  card.dataset.code = r['reutersCode'];
+  card.dataset.nation = r['nationCode'] || '';
+  card.dataset.name = r['종목명'];
+  attachDrag(card);
 
-  // 순서 이동 / 삭제 — 평소엔 숨었다가 hover 시 나타난다.
+  // 삭제 — 평소엔 숨었다가 hover 시 나타난다.
+  // 순서 변경은 카드를 끌어서 한다.
   var tools = el('div', 'card-tools');
-  tools.appendChild(toolButton('↑', '위로', index === 0, function () {
-    move(r['reutersCode'], -1);
-  }));
-  tools.appendChild(toolButton('↓', '아래로', index === total - 1, function () {
-    move(r['reutersCode'], 1);
-  }));
   var del = toolButton('×', '삭제', false, function () {
     remove(r['reutersCode'], r['종목명']);
   });
@@ -250,11 +287,21 @@ function stockCard(r, index, total) {
   tools.appendChild(del);
   card.appendChild(tools);
 
-  // 종목명 + 코드
+  // 국내는 '종목명 + 코드', 해외는 티커만. 해외 ETF 는 이름이 40자를
+  // 넘는데 티커만으로 충분히 알아본다. 시장·통화는 아래 메타 줄에 있다.
+  var domestic = r['nationCode'] === 'KOR';
+
   var top = el('div', 'card-top');
-  top.appendChild(el('div', 'card-name', r['종목명']));
-  top.appendChild(el('div', 'card-code', r['코드']));
+  var titles = el('div', 'card-titles');
+  titles.appendChild(
+    el('div', 'card-name' + (domestic ? '' : ' ticker'), domestic ? r['종목명'] : r['코드'])
+  );
+  if (domestic) titles.appendChild(el('div', 'card-sub', r['코드']));
+  top.appendChild(titles);
   card.appendChild(top);
+
+  // 원래 이름은 툴팁으로 남겨둔다. 티커가 헷갈릴 때 확인할 수 있게.
+  if (!domestic) card.title = r['종목명'];
 
   // 현재가 — 통화에 따라 소수 자릿수를 다르게 본다.
   var decimals = r['통화'] === 'KRW' ? 0 : 2;
@@ -287,6 +334,110 @@ function stockCard(r, index, total) {
   card.appendChild(meta);
 
   return card;
+}
+
+/* -------------------------------------------------------------- 드래그 */
+
+var dragging = null;
+
+function attachDrag(card) {
+  card.addEventListener('dragstart', function (e) {
+    dragging = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox 는 데이터가 없으면 드래그를 시작하지 않는다.
+    e.dataTransfer.setData('text/plain', card.dataset.code);
+  });
+
+  card.addEventListener('dragend', function () {
+    card.classList.remove('dragging');
+    clearDropMarks();
+    dragging = null;
+  });
+
+  card.addEventListener('dragover', function (e) {
+    if (!dragging || dragging === card) return;
+    e.preventDefault();
+
+    // 국가가 다르면 놓을 수 없다는 것을 커서와 표시로 알린다.
+    if (card.dataset.nation !== dragging.dataset.nation) {
+      e.dataTransfer.dropEffect = 'none';
+      clearDropMarks();
+      card.classList.add('drop-deny');
+      return;
+    }
+
+    e.dataTransfer.dropEffect = 'move';
+
+    // 카드 중앙을 기준으로 앞/뒤 어느 쪽에 놓을지 정한다.
+    var box = card.getBoundingClientRect();
+    var after = e.clientX > box.left + box.width / 2;
+
+    clearDropMarks();
+    card.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+
+  card.addEventListener('dragleave', function () {
+    card.classList.remove('drop-before', 'drop-after', 'drop-deny');
+  });
+
+  card.addEventListener('drop', function (e) {
+    if (!dragging || dragging === card) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 국가별로 묶어 보여주므로 그룹을 넘나드는 이동은 받지 않는다.
+    if (card.dataset.nation !== dragging.dataset.nation) {
+      clearDropMarks();
+      alertNationMismatch(dragging, card);
+      return;
+    }
+
+    var after = card.classList.contains('drop-after');
+    clearDropMarks();
+    card.parentNode.insertBefore(dragging, after ? card.nextSibling : card);
+
+    commitOrder();
+  });
+}
+
+function clearDropMarks() {
+  var marked = document.querySelectorAll('.drop-before, .drop-after, .drop-deny');
+  Array.prototype.forEach.call(marked, function (n) {
+    n.classList.remove('drop-before', 'drop-after', 'drop-deny');
+  });
+}
+
+function nationCodeOf(nation) {
+  var info = NATION_LABEL[nation];
+  return info ? info.code : nation || '기타';
+}
+
+function alertNationMismatch(from, to) {
+  alert(
+    from.dataset.name + ' 은(는) ' + nationCodeOf(from.dataset.nation) + ' 종목입니다.\n' +
+      nationCodeOf(to.dataset.nation) + ' 영역으로는 옮길 수 없습니다.\n\n' +
+      '순서 변경은 같은 국가 안에서만 가능합니다.'
+  );
+}
+
+/** 화면에 보이는 카드 순서를 그대로 서버에 보낸다. */
+function commitOrder() {
+  var cards = document.querySelectorAll('#list .card');
+  var codes = Array.prototype.map.call(cards, function (c) {
+    return c.dataset.code;
+  });
+  if (!codes.length) return;
+
+  notice('순서 저장 중…');
+
+  callApi({ action: 'reorder', codes: JSON.stringify(codes) })
+    .then(function () {
+      notice('순서를 바꿨습니다');
+      // 국가 그룹을 넘나든 경우 그룹 머리글이 어긋나므로 다시 그린다.
+      return load(true);
+    })
+    .catch(fail);
 }
 
 function toolButton(label, title, disabled, onClick) {

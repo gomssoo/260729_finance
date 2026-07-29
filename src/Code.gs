@@ -662,6 +662,30 @@ function swapRows(sheet, rowA, rowB) {
   b.setValues(aValues);
 }
 
+/**
+ * 국가끼리 붙여 정렬한다. 국가가 처음 등장한 위치를 그 국가의 순서로 삼아,
+ * 사용자가 만든 큰 순서(어느 나라를 위에 둘지)는 유지한다.
+ */
+function groupByNation(rows) {
+  var order = [];
+  var buckets = {};
+
+  rows.forEach(function (r) {
+    var key = String(r[COL['nationCode'] - 1] || '');
+    if (!buckets[key]) {
+      buckets[key] = [];
+      order.push(key);
+    }
+    buckets[key].push(r);
+  });
+
+  var out = [];
+  order.forEach(function (key) {
+    out = out.concat(buckets[key]);
+  });
+  return out;
+}
+
 /** 화면에서 드래그로 만든 순서를 그대로 시트에 반영한다. */
 function reorderStocks(orderedCodes) {
   if (!orderedCodes || !orderedCodes.length) return { reordered: 0 };
@@ -694,6 +718,11 @@ function reorderStocks(orderedCodes) {
   });
 
   if (ordered.length !== rows.length) return { reordered: 0 };
+
+  // 화면이 국가별로 묶어 보여주므로 시트도 같은 순서로 맞춘다.
+  // 그렇지 않으면 한 국가가 흩어져 저장되고, 다음 드래그 때
+  // 화면 순서와 시트 순서가 어긋나 엉뚱한 결과가 나온다.
+  ordered = groupByNation(ordered);
 
   sheet.getRange(2, 1, ordered.length, HEADERS.length).setValues(ordered);
   return { reordered: ordered.length };
